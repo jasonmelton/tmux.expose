@@ -28,7 +28,7 @@ fn sample_window(id: &str, name: &str, index: u32) -> Window {
         name: name.to_string(),
         index,
         active: index == 0,
-        preview: Vec::new(),
+        panes: Vec::new(),
         preview_error: None,
     }
 }

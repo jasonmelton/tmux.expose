@@ -84,18 +84,18 @@ pub fn list_windows(session_id: &str, current_session_id: Option<&str>) -> Resul
     let is_current_session = Some(session_id) == current_session_id;
     for window in &mut windows {
         if is_current_session && window.active {
-            window.preview.clear();
+            window.panes.clear();
             window.preview_error = Some("Current window preview disabled".to_string());
             continue;
         }
 
-        match capture_window_preview(&window.id, 200) {
-            Ok(preview) => {
-                window.preview = preview;
+        match capture_window_panes(&window.id, 200) {
+            Ok(panes) => {
+                window.panes = panes;
                 window.preview_error = None;
             }
             Err(error) => {
-                window.preview.clear();
+                window.panes.clear();
                 window.preview_error = Some(error.to_string());
             }
         }
@@ -168,12 +168,31 @@ pub fn capture_session_preview(session_target: &str, max_lines: usize) -> Result
     capture_pane_preview(&target, &format!("session '{session_target}'"), max_lines)
 }
 
-pub fn capture_window_preview(window_target: &str, max_lines: usize) -> Result<Vec<String>> {
-    capture_pane_preview(
-        window_target,
-        &format!("window '{window_target}'"),
-        max_lines,
-    )
+pub fn capture_window_panes(window_target: &str, max_lines: usize) -> Result<Vec<crate::model::PanePreview>> {
+    let output = Command::new("tmux")
+        .args(["list-panes", "-t", window_target, "-F", "#{pane_id}\u{1f}#{pane_active}"])
+        .output()
+        .with_context(|| format!("failed to list panes for window '{window_target}'"))?;
+
+    if !output.status.success() {
+        return Err(tmux_error("tmux list-panes failed", &output.stderr));
+    }
+
+    let mut panes = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if line.is_empty() { continue; }
+        let mut parts = line.split('\u{1f}');
+        if let (Some(id), Some(active_str)) = (parts.next(), parts.next()) {
+            let active = active_str == "1" || active_str == "true";
+            let lines = capture_pane_preview(id, &format!("pane '{id}'"), max_lines).unwrap_or_default();
+            panes.push(crate::model::PanePreview {
+                id: id.to_string(),
+                active,
+                lines,
+            });
+        }
+    }
+    Ok(panes)
 }
 
 pub fn switch_client(session_target: &str) -> Result<()> {
@@ -263,7 +282,7 @@ pub fn parse_windows(output: &str) -> Vec<Window> {
                 index,
                 name,
                 active,
-                preview: Vec::new(),
+                panes: Vec::new(),
                 preview_error: None,
             })
         })
