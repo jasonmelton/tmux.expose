@@ -276,7 +276,10 @@ fn main() -> Result<()> {
                     }
                 }
             } else {
-                match tmux::list_sessions_skipping_preview_for(current_session_id.as_deref()) {
+                match tmux::list_sessions_skipping_preview_for(
+                    current_session_id.as_deref(),
+                    &app.sessions,
+                ) {
                     Ok(sessions) => {
                         app.replace_sessions_preserving_preview_for(
                             sessions,

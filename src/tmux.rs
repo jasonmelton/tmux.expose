@@ -33,7 +33,7 @@ fn fetch_sessions_raw() -> Result<Vec<Session>> {
 }
 
 pub fn list_sessions() -> Result<Vec<Session>> {
-    list_sessions_skipping_preview_for(None)
+    list_sessions_skipping_preview_for(None, &[])
 }
 
 pub fn list_sessions_metadata() -> Result<Vec<Session>> {
@@ -42,6 +42,7 @@ pub fn list_sessions_metadata() -> Result<Vec<Session>> {
 
 pub fn list_sessions_skipping_preview_for(
     current_session_id: Option<&str>,
+    previous_sessions: &[Session],
 ) -> Result<Vec<Session>> {
     let mut sessions = fetch_sessions_raw()?;
 
@@ -51,6 +52,14 @@ pub fn list_sessions_skipping_preview_for(
             session.preview.clear();
             session.preview_error = Some("Current session preview disabled".to_string());
             continue;
+        }
+
+        if let Some(prev) = previous_sessions.iter().find(|s| s.id == session.id) {
+            if prev.last_activity == session.last_activity && (prev.preview_error.is_none() || prev.preview_error.as_deref() == Some("Current session preview disabled")) {
+                session.preview = prev.preview.clone();
+                session.preview_error = prev.preview_error.clone();
+                continue;
+            }
         }
 
         match capture_session_preview(&session.id, 200) {
