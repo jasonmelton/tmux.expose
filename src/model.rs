@@ -23,6 +23,7 @@ pub struct Window {
     pub index: u32,
     pub name: String,
     pub active: bool,
+    pub last_activity: Option<String>,
     pub panes: Vec<PanePreview>,
     pub preview_error: Option<String>,
 }
@@ -368,7 +369,7 @@ mod tests {
             index,
             name: name.to_string(),
             active,
-            panes: Vec::new(),
+            last_activity: None, panes: Vec::new(),
             preview_error: None,
         }
     }

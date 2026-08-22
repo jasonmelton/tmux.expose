@@ -311,7 +311,7 @@ mod tests {
             index: 0,
             name: name.to_string(),
             active,
-            panes: Vec::new(),
+            last_activity: None, panes: Vec::new(),
             preview_error: None,
         }
     }
