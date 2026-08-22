@@ -41,7 +41,7 @@ fn test_req1_1_press_zoom_key_zooms_into_selected_session() {
     );
 
     assert!(!app.is_zoomed());
-    handle_key(&mut app, key(KeyCode::Char('z')), 2);
+    handle_key(&mut app, key(KeyCode::Char(' ')), 2);
 
     assert!(app.is_zoomed());
     assert_eq!(app.zoomed_session().map(|s| s.name.as_str()), Some("dev"));
@@ -54,16 +54,16 @@ fn test_req1_4_zoom_key_or_esc_zooms_out_to_session_view_without_quitting() {
         Some("dev".to_string()),
     );
 
-    handle_key(&mut app, key(KeyCode::Char('z')), 2);
+    handle_key(&mut app, key(KeyCode::Char(' ')), 2);
     assert!(app.is_zoomed());
 
     // Pressing 'z' again toggles back out to session view
-    handle_key(&mut app, key(KeyCode::Char('z')), 2);
+    handle_key(&mut app, key(KeyCode::Char(' ')), 2);
     assert!(!app.is_zoomed());
     assert!(!app.should_quit);
 
     // Zoom in and verify Esc also zooms out without quitting
-    handle_key(&mut app, key(KeyCode::Char('z')), 2);
+    handle_key(&mut app, key(KeyCode::Char(' ')), 2);
     assert!(app.is_zoomed());
 
     handle_key(&mut app, key(KeyCode::Esc), 2);
@@ -97,7 +97,7 @@ fn test_req1_2_zoomed_view_provides_windows_for_selected_session() {
         sample_window("@2", "shell", 1),
     ];
     app.set_windows_for_zoomed_session(windows);
-    handle_key(&mut app, key(KeyCode::Char('z')), 2);
+    handle_key(&mut app, key(KeyCode::Char(' ')), 2);
 
     assert_eq!(app.visible_window_count(), 2);
     assert_eq!(app.selected_window().map(|w| w.name.as_str()), Some("code"));
@@ -115,7 +115,7 @@ fn test_req1_3_enter_on_zoomed_window_targets_specific_window_for_switch() {
         sample_window("@2", "shell", 1),
     ];
     app.set_windows_for_zoomed_session(windows);
-    handle_key(&mut app, key(KeyCode::Char('z')), 2);
+    handle_key(&mut app, key(KeyCode::Char(' ')), 2);
     handle_key(&mut app, key(KeyCode::Right), 2);
 
     handle_key(&mut app, key(KeyCode::Enter), 2);
@@ -133,7 +133,7 @@ fn test_req1_5_zoomed_window_grid_navigation_clamps_at_edges() {
         sample_window("@3", "w3", 2),
     ];
     app.set_windows_for_zoomed_session(windows);
-    handle_key(&mut app, key(KeyCode::Char('z')), 2);
+    handle_key(&mut app, key(KeyCode::Char(' ')), 2);
 
     assert_eq!(app.selected_index, 0);
     handle_key(&mut app, key(KeyCode::Right), 2);
@@ -153,7 +153,7 @@ fn test_haz1_1_refresh_preserves_zoomed_state_and_session() {
         Some("dev".to_string()),
     );
 
-    handle_key(&mut app, key(KeyCode::Char('z')), 2);
+    handle_key(&mut app, key(KeyCode::Char(' ')), 2);
     assert!(app.is_zoomed());
 
     let refreshed_sessions = vec![sample_session("dev"), sample_session("logs")];

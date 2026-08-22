@@ -23,10 +23,10 @@ else
   key_table="${key_table:-prefix}"
 fi
 
-zoom_key="${zoom_key:-z}"
-if [[ ! "${zoom_key}" =~ ^(M-|C-)?.$ || "${zoom_key}" == "Esc" || "${zoom_key}" == "C-c" ]]; then
-  printf 'tmux.expose: invalid @tmux-expose-zoom-key: %s (must be a single character, M-<char>, or C-<char>; Esc and C-c are reserved)\n' "${zoom_key}" >&2
-  zoom_key="z"
+zoom_key="${zoom_key:-Space}"
+if [[ ! "${zoom_key}" =~ ^(M-|C-)?.$ && "${zoom_key}" != "Space" || "${zoom_key}" == "Esc" || "${zoom_key}" == "C-c" ]]; then
+  printf 'tmux.expose: invalid @tmux-expose-zoom-key: %s (must be a single character, Space, M-<char>, or C-<char>; Esc and C-c are reserved)\n' "${zoom_key}" >&2
+  zoom_key="Space"
 fi
 
 width="${width:-100%}"

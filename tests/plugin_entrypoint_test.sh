@@ -66,57 +66,57 @@ assert_equals() {
 }
 
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose ' \
+  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose ' \
   "$(run_plugin)"
 
 assert_equals \
-  'bind-key -T prefix E display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=E -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose ' \
+  'bind-key -T prefix E display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=E -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose ' \
   "$(TMUX_EXPOSE_TEST_KEY=E run_plugin)"
 
 assert_equals \
-  'bind-key -T root C-e display-popup -w 80% -h 70% -e TMUX_EXPOSE_TOGGLE_KEY=C-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose\ --columns\ 2 ' \
+  'bind-key -T root C-e display-popup -w 80% -h 70% -e TMUX_EXPOSE_TOGGLE_KEY=C-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose\ --columns\ 2 ' \
   "$(TMUX_EXPOSE_TEST_KEY=C-e TMUX_EXPOSE_TEST_KEY_TABLE=root TMUX_EXPOSE_TEST_WIDTH=80% TMUX_EXPOSE_TEST_HEIGHT=70% TMUX_EXPOSE_TEST_COMMAND='tmux-expose --columns 2' run_plugin)"
 
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 50% -y \#\{popup_pane_bottom\} -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose ' \
+  'bind-key -T root M-e display-popup -w 100% -h 50% -y \#\{popup_pane_bottom\} -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose ' \
   "$(TMUX_EXPOSE_TEST_ANCHOR=bottom TMUX_EXPOSE_TEST_HEIGHT=50% run_plugin)"
 
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 50% -y \#\{popup_pane_top\} -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose ' \
+  'bind-key -T root M-e display-popup -w 100% -h 50% -y \#\{popup_pane_top\} -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose ' \
   "$(TMUX_EXPOSE_TEST_ANCHOR=top TMUX_EXPOSE_TEST_HEIGHT=50% run_plugin)"
 
 assert_equals \
-  'bind-key -T root M-e display-popup -w 50% -h 100% -x \#\{popup_pane_right\} -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose ' \
+  'bind-key -T root M-e display-popup -w 50% -h 100% -x \#\{popup_pane_right\} -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose ' \
   "$(TMUX_EXPOSE_TEST_ANCHOR=right TMUX_EXPOSE_TEST_WIDTH=50% run_plugin)"
 
 assert_equals \
-  'bind-key -T root M-e display-popup -w 50% -h 100% -x \#\{popup_pane_left\} -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose ' \
+  'bind-key -T root M-e display-popup -w 50% -h 100% -x \#\{popup_pane_left\} -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose ' \
   "$(TMUX_EXPOSE_TEST_ANCHOR=left TMUX_EXPOSE_TEST_WIDTH=50% run_plugin)"
 
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 100% -s bg=colour234 -S fg=colour245 -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose ' \
+  'bind-key -T root M-e display-popup -w 100% -h 100% -s bg=colour234 -S fg=colour245 -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose ' \
   "$(TMUX_EXPOSE_TEST_STYLE='bg=colour234' TMUX_EXPOSE_TEST_BORDER_STYLE='fg=colour245' run_plugin)"
 
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose\ --selected-color\ magenta ' \
+  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose\ --selected-color\ magenta ' \
   "$(TMUX_EXPOSE_TEST_SELECTED_COLOR=magenta run_plugin)"
 
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose\ --selected-color\ magenta\ --attached-color\ blue\ --inactive-color\ colour245 ' \
+  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose\ --selected-color\ magenta\ --attached-color\ blue\ --inactive-color\ colour245 ' \
   "$(TMUX_EXPOSE_TEST_SELECTED_COLOR=magenta TMUX_EXPOSE_TEST_ATTACHED_COLOR=blue TMUX_EXPOSE_TEST_INACTIVE_COLOR=colour245 run_plugin)"
 
 # Hex values must be shell-escaped so the popup command isn't truncated at '#'.
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose\ --selected-color\ \\#ff8700 ' \
+  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose\ --selected-color\ \\#ff8700 ' \
   "$(TMUX_EXPOSE_TEST_SELECTED_COLOR='#ff8700' run_plugin)"
 
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose\ --vim ' \
+  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose\ --vim ' \
   "$(TMUX_EXPOSE_TEST_VIM_KEYS=on run_plugin)"
 
 # An "off"/unset value must not append the flag.
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose ' \
+  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose ' \
   "$(TMUX_EXPOSE_TEST_VIM_KEYS=off run_plugin)"
 
 # Non-default zoom key.
@@ -126,5 +126,5 @@ assert_equals \
 
 # Invalid zoom key falls back to z.
 assert_equals \
-  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E tmux-expose ' \
+  'bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=Space -E tmux-expose ' \
   "$(TMUX_EXPOSE_TEST_ZOOM_KEY=invalid run_plugin 2>/dev/null)"

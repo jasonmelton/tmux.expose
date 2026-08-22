@@ -81,14 +81,7 @@ pub fn list_windows(session_id: &str, current_session_id: Option<&str>) -> Resul
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut windows = parse_windows(&stdout);
 
-    let capture_preview = should_capture_preview(session_id, current_session_id);
     for window in &mut windows {
-        if !capture_preview {
-            window.preview.clear();
-            window.preview_error = Some("Current session preview disabled".to_string());
-            continue;
-        }
-
         match capture_window_preview(&window.id, 200) {
             Ok(preview) => {
                 window.preview = preview;
