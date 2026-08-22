@@ -21,6 +21,7 @@ impl ToggleKey {
 
         let code = match key {
             "Esc" => KeyCode::Esc,
+            "Space" => KeyCode::Char(' '),
             key if key.chars().count() == 1 => {
                 let ch = key.chars().next()?;
                 if ch.is_ascii_uppercase() {
@@ -63,8 +64,8 @@ pub fn resolve_zoom_key(
     toggle_key: Option<ToggleKey>,
     vim_keys: bool,
 ) -> (Option<ToggleKey>, String) {
-    let default_key = ToggleKey::from_tmux_key("z").unwrap();
-    let default_label = "z".to_string();
+    let default_key = ToggleKey::from_tmux_key("Space").unwrap();
+    let default_label = "Space".to_string();
 
     if let Some(s) = raw {
         let trimmed = s.trim();
@@ -84,7 +85,7 @@ pub fn resolve_zoom_key(
 }
 
 pub fn handle_key(app: &mut App, key: KeyEvent, columns: usize) {
-    handle_key_with_toggle(app, key, columns, None, ToggleKey::from_tmux_key("z"));
+    handle_key_with_toggle(app, key, columns, None, ToggleKey::from_tmux_key("Space"));
 }
 
 pub fn handle_key_with_toggle(
@@ -737,10 +738,10 @@ mod tests {
         let mut app = App::new(vec![session("dev")], None);
         assert!(!app.is_zoomed());
 
-        handle_key(&mut app, key(KeyCode::Char('z')), 1);
+        handle_key(&mut app, key(KeyCode::Char(' ')), 1);
         assert!(app.is_zoomed());
 
-        handle_key(&mut app, key(KeyCode::Char('z')), 1);
+        handle_key(&mut app, key(KeyCode::Char(' ')), 1);
         assert!(!app.is_zoomed());
     }
 
@@ -785,7 +786,7 @@ mod tests {
         assert_eq!(app.selected_session().unwrap().name, "frontend");
 
         // Pressing default zoom key 'z' must zoom into the selected session rather than appending 'z'
-        handle_key(&mut app, key(KeyCode::Char('z')), 2);
+        handle_key(&mut app, key(KeyCode::Char(' ')), 2);
         assert!(app.is_zoomed());
         assert!(!app.is_searching());
         assert_eq!(app.zoomed_session().unwrap().name, "frontend");
@@ -794,7 +795,7 @@ mod tests {
     #[test]
     fn modified_zoom_key_from_search_zooms_and_single_esc_exits() {
         let mut app = App::new(vec![session("dev")], None);
-        let zoom_key = ToggleKey::from_tmux_key("M-z");
+        let zoom_key = ToggleKey::from_tmux_key("M-Space");
 
         // Type a search query
         handle_key_with_toggle(&mut app, key(KeyCode::Char('d')), 1, None, zoom_key);
@@ -803,7 +804,7 @@ mod tests {
         // Trigger zoom with modified key
         handle_key_with_toggle(
             &mut app,
-            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT),
+            KeyEvent::new(KeyCode::Char(' '), KeyModifiers::ALT),
             1,
             None,
             zoom_key,
@@ -819,7 +820,7 @@ mod tests {
 
     #[test]
     fn resolve_zoom_key_validates_and_handles_conflicts() {
-        let default_z = ToggleKey::from_tmux_key("z");
+        let default_z = ToggleKey::from_tmux_key("Space");
 
         // Valid custom key
         let (key_x, label_x) = resolve_zoom_key(Some("x"), None, false);
@@ -827,33 +828,33 @@ mod tests {
         assert_eq!(label_x, "x");
 
         // Valid modified custom key
-        let (key_mz, label_mz) = resolve_zoom_key(Some("M-z"), None, false);
-        assert_eq!(key_mz, ToggleKey::from_tmux_key("M-z"));
-        assert_eq!(label_mz, "M-z");
+        let (key_mz, label_mz) = resolve_zoom_key(Some("M-Space"), None, false);
+        assert_eq!(key_mz, ToggleKey::from_tmux_key("M-Space"));
+        assert_eq!(label_mz, "M-Space");
 
         // Unsupported key string falls back to 'z'
         let (key_f1, label_f1) = resolve_zoom_key(Some("F1"), None, false);
         assert_eq!(key_f1, default_z);
-        assert_eq!(label_f1, "z");
+        assert_eq!(label_f1, "Space");
 
         // Esc is reserved and falls back to 'z'
         let (key_esc, label_esc) = resolve_zoom_key(Some("Esc"), None, false);
         assert_eq!(key_esc, default_z);
-        assert_eq!(label_esc, "z");
+        assert_eq!(label_esc, "Space");
 
         // C-c is reserved and falls back to 'z'
         let (key_cc, label_cc) = resolve_zoom_key(Some("C-c"), None, false);
         assert_eq!(key_cc, default_z);
-        assert_eq!(label_cc, "z");
+        assert_eq!(label_cc, "Space");
 
         // Conflict with toggle_key falls back to 'z'
         let toggle = ToggleKey::from_tmux_key("s");
         let (key_s, label_s) = resolve_zoom_key(Some("s"), toggle, false);
         assert_eq!(key_s, default_z);
-        assert_eq!(label_s, "z");
+        assert_eq!(label_s, "Space");
 
         // Conflict with toggle key 'z' causes fallback 'z' to be rejected
-        let toggle_z = ToggleKey::from_tmux_key("z");
+        let toggle_z = ToggleKey::from_tmux_key("Space");
         let (key_tz, label_tz) = resolve_zoom_key(None, toggle_z, false);
         assert_eq!(key_tz, None);
         assert_eq!(label_tz, "");
@@ -862,7 +863,7 @@ mod tests {
         for k in &["h", "j", "k", "l", "/", "q"] {
             let (key_vim, label_vim) = resolve_zoom_key(Some(k), None, true);
             assert_eq!(key_vim, default_z, "key {k} should fall back to z");
-            assert_eq!(label_vim, "z");
+            assert_eq!(label_vim, "Space");
         }
 
         // Modified keys in vim mode (e.g. M-h) are allowed
@@ -878,6 +879,6 @@ mod tests {
         // None falls back to 'z'
         let (key_none, label_none) = resolve_zoom_key(None, None, false);
         assert_eq!(key_none, default_z);
-        assert_eq!(label_none, "z");
+        assert_eq!(label_none, "Space");
     }
 }
