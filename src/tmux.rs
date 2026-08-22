@@ -8,7 +8,7 @@ const FIELD_SEPARATOR: char = '\u{1f}';
 const LEGACY_FIELD_SEPARATOR: char = ':';
 const SESSION_FORMAT: &str = "#{session_id}\u{1f}#{session_name}\u{1f}#{session_attached}\u{1f}#{session_windows}\u{1f}#{session_created}\u{1f}#{session_activity}";
 const WINDOW_FORMAT: &str =
-    "#{window_id}\u{1f}#{window_name}\u{1f}#{window_active}\u{1f}#{window_index}";
+    "#{window_id}\u{1f}#{window_name}\u{1f}#{window_active}\u{1f}#{window_index}\u{1f}#{window_activity}";
 
 fn detect_separator(line: &str) -> char {
     if line.contains(FIELD_SEPARATOR) {
@@ -33,7 +33,7 @@ fn fetch_sessions_raw() -> Result<Vec<Session>> {
 }
 
 pub fn list_sessions() -> Result<Vec<Session>> {
-    list_sessions_skipping_preview_for(None)
+    list_sessions_skipping_preview_for(&[])
 }
 
 pub fn list_sessions_metadata() -> Result<Vec<Session>> {
@@ -41,16 +41,19 @@ pub fn list_sessions_metadata() -> Result<Vec<Session>> {
 }
 
 pub fn list_sessions_skipping_preview_for(
-    current_session_id: Option<&str>,
+    previous_sessions: &[Session],
 ) -> Result<Vec<Session>> {
     let mut sessions = fetch_sessions_raw()?;
 
     for session in &mut sessions {
         session.current_window = current_window_name(&session.id).unwrap_or(None);
-        if !should_capture_preview(&session.id, current_session_id) {
-            session.preview.clear();
-            session.preview_error = Some("Current session preview disabled".to_string());
-            continue;
+        
+        if let Some(prev) = previous_sessions.iter().find(|s| s.id == session.id) {
+            if prev.last_activity == session.last_activity && prev.preview_error.is_none() && !prev.preview.is_empty() {
+                session.preview = prev.preview.clone();
+                session.preview_error = prev.preview_error.clone();
+                continue;
+            }
         }
 
         match capture_session_preview(&session.id, 200) {
@@ -68,7 +71,7 @@ pub fn list_sessions_skipping_preview_for(
     Ok(sessions)
 }
 
-pub fn list_windows(session_id: &str, current_session_id: Option<&str>) -> Result<Vec<Window>> {
+pub fn list_windows(session_id: &str, previous_windows: &[crate::model::Window]) -> Result<Vec<Window>> {
     let output = Command::new("tmux")
         .args(["list-windows", "-t", session_id, "-F", WINDOW_FORMAT])
         .output()
@@ -81,21 +84,22 @@ pub fn list_windows(session_id: &str, current_session_id: Option<&str>) -> Resul
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut windows = parse_windows(&stdout);
 
-    let is_current_session = Some(session_id) == current_session_id;
     for window in &mut windows {
-        if is_current_session && window.active {
-            window.preview.clear();
-            window.preview_error = Some("Current window preview disabled".to_string());
-            continue;
+        if let Some(prev) = previous_windows.iter().find(|w| w.id == window.id) {
+            if prev.last_activity == window.last_activity && prev.preview_error.is_none() && !prev.panes.is_empty() {
+                window.panes = prev.panes.clone();
+                window.preview_error = prev.preview_error.clone();
+                continue;
+            }
         }
 
-        match capture_window_preview(&window.id, 200) {
-            Ok(preview) => {
-                window.preview = preview;
+        match capture_window_panes(&window.id, 200) {
+            Ok(panes) => {
+                window.panes = panes;
                 window.preview_error = None;
             }
             Err(error) => {
-                window.preview.clear();
+                window.panes.clear();
                 window.preview_error = Some(error.to_string());
             }
         }
@@ -168,12 +172,31 @@ pub fn capture_session_preview(session_target: &str, max_lines: usize) -> Result
     capture_pane_preview(&target, &format!("session '{session_target}'"), max_lines)
 }
 
-pub fn capture_window_preview(window_target: &str, max_lines: usize) -> Result<Vec<String>> {
-    capture_pane_preview(
-        window_target,
-        &format!("window '{window_target}'"),
-        max_lines,
-    )
+pub fn capture_window_panes(window_target: &str, max_lines: usize) -> Result<Vec<crate::model::PanePreview>> {
+    let output = Command::new("tmux")
+        .args(["list-panes", "-t", window_target, "-F", "#{pane_id}\u{1f}#{pane_active}"])
+        .output()
+        .with_context(|| format!("failed to list panes for window '{window_target}'"))?;
+
+    if !output.status.success() {
+        return Err(tmux_error("tmux list-panes failed", &output.stderr));
+    }
+
+    let mut panes = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if line.is_empty() { continue; }
+        let mut parts = line.split('\u{1f}');
+        if let (Some(id), Some(active_str)) = (parts.next(), parts.next()) {
+            let active = active_str == "1" || active_str == "true";
+            let lines = capture_pane_preview(id, &format!("pane '{id}'"), max_lines).unwrap_or_default();
+            panes.push(crate::model::PanePreview {
+                id: id.to_string(),
+                active,
+                lines,
+            });
+        }
+    }
+    Ok(panes)
 }
 
 pub fn switch_client(session_target: &str) -> Result<()> {
@@ -257,13 +280,19 @@ pub fn parse_windows(output: &str) -> Vec<Window> {
                 .next()
                 .and_then(|value| value.parse::<u32>().ok())
                 .unwrap_or(0);
+                
+            let last_activity = parts
+                .next()
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
 
             Some(Window {
                 id,
                 index,
                 name,
                 active,
-                preview: Vec::new(),
+                last_activity,
+                panes: Vec::new(),
                 preview_error: None,
             })
         })
@@ -304,9 +333,6 @@ fn tmux_error(message: &str, stderr: &[u8]) -> anyhow::Error {
     }
 }
 
-fn should_capture_preview(session_id: &str, current_session_id: Option<&str>) -> bool {
-    current_session_id != Some(session_id)
-}
 
 #[cfg(test)]
 mod tests {
@@ -427,10 +453,4 @@ mod tests {
         assert_eq!(preview, vec!["\u{1b}[31mred\u{1b}[0m plain".to_string()]);
     }
 
-    #[test]
-    fn skips_preview_capture_for_current_session_only_when_requested() {
-        assert!(!should_capture_preview("$1", Some("$1")));
-        assert!(should_capture_preview("$2", Some("$1")));
-        assert!(should_capture_preview("$1", None));
-    }
 }

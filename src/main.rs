@@ -137,10 +137,10 @@ fn execute_switch(app: &mut App) -> bool {
     }
 }
 
-fn refresh_zoomed_windows(app: &mut App, current_session_id: Option<&str>) {
+fn refresh_zoomed_windows(app: &mut App) {
     if let Some(session) = app.zoomed_session() {
         let session_id = session.id.clone();
-        match tmux::list_windows(&session_id, current_session_id) {
+        match tmux::list_windows(&session_id, &app.windows) {
             Ok(windows) => {
                 app.set_windows_for_zoomed_session(windows);
                 app.error = None;
@@ -234,7 +234,7 @@ fn main() -> Result<()> {
                         break;
                     }
                     if app.is_zoomed() && app.windows.is_empty() && app.error.is_none() {
-                        refresh_zoomed_windows(&mut app, current_session_id.as_deref());
+                        refresh_zoomed_windows(&mut app);
                     }
                 }
                 Event::Mouse(mouse) => {
@@ -261,7 +261,7 @@ fn main() -> Result<()> {
                     Ok(sessions) => {
                         app.replace_sessions_preserving_all_previews(sessions);
                         if app.is_zoomed() {
-                            refresh_zoomed_windows(&mut app, current_session_id.as_deref());
+                            refresh_zoomed_windows(&mut app);
                         } else {
                             app.error = None;
                         }
@@ -276,7 +276,7 @@ fn main() -> Result<()> {
                     }
                 }
             } else {
-                match tmux::list_sessions_skipping_preview_for(current_session_id.as_deref()) {
+                match tmux::list_sessions_skipping_preview_for(&app.sessions) {
                     Ok(sessions) => {
                         app.replace_sessions_preserving_preview_for(
                             sessions,

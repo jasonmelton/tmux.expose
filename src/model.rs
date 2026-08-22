@@ -10,13 +10,21 @@ pub struct Session {
     pub preview_error: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PanePreview {
+    pub id: String,
+    pub active: bool,
+    pub lines: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Window {
     pub id: String,
     pub index: u32,
     pub name: String,
     pub active: bool,
-    pub preview: Vec<String>,
+    pub last_activity: Option<String>,
+    pub panes: Vec<PanePreview>,
     pub preview_error: Option<String>,
 }
 
@@ -361,7 +369,7 @@ mod tests {
             index,
             name: name.to_string(),
             active,
-            preview: Vec::new(),
+            last_activity: None, panes: Vec::new(),
             preview_error: None,
         }
     }

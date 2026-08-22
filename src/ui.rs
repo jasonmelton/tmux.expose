@@ -135,12 +135,17 @@ pub fn render_grid(
     }
 }
 
+enum PreviewData<'a> {
+    Single(&'a [String]),
+    Grid(&'a [crate::model::PanePreview]),
+}
+
 struct CardData<'a> {
     title: &'a str,
     highlight: bool,
     bottom_title: Span<'static>,
     header: Line<'static>,
-    preview: &'a [String],
+    preview: PreviewData<'a>,
     preview_error: Option<&'a str>,
 }
 
@@ -179,16 +184,93 @@ fn render_card_inner(
             "Preview unavailable",
             Style::default().fg(Color::Red),
         )));
-    } else if card.preview.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "No visible content",
-            Style::default().fg(Color::DarkGray),
-        )));
     } else {
-        let start = card.preview.len().saturating_sub(preview_height);
-        for line in card.preview.iter().skip(start) {
-            let line = truncate_ansi(line, area.width.saturating_sub(4) as usize);
-            lines.push(ansi_to_line(&line));
+        match card.preview {
+            PreviewData::Single(preview) => {
+                if preview.is_empty() {
+                    lines.push(Line::from(Span::styled("No visible content", Style::default().fg(Color::DarkGray))));
+                } else {
+                    let start = preview.len().saturating_sub(preview_height);
+                    for line in preview.iter().skip(start) {
+                        let line = truncate_ansi(line, area.width.saturating_sub(4) as usize);
+                        lines.push(ansi_to_line(&line));
+                    }
+                }
+            }
+            PreviewData::Grid(panes) => {
+                if panes.is_empty() {
+                    lines.push(Line::from(Span::styled("No visible panes", Style::default().fg(Color::DarkGray))));
+                } else {
+                    let inner_area = block.inner(area);
+                    // render header manually first since we bypass the outer paragraph later
+                    let paragraph = Paragraph::new(lines.clone()).block(block.clone());
+                    frame.render_widget(paragraph, area);
+                    
+                    let grid_area = Rect {
+                        x: inner_area.x,
+                        y: inner_area.y.saturating_add(2),
+                        width: inner_area.width,
+                        height: inner_area.height.saturating_sub(2),
+                    };
+                    
+                    let pane_count = panes.len();
+                    let columns = if pane_count <= 1 { 1 } else if pane_count <= 4 { 2 } else { 3 };
+                    let rows = (pane_count + columns - 1) / columns;
+                    
+                    let row_constraints = vec![Constraint::Percentage((100 / rows) as u16); rows];
+                    let row_chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints(row_constraints)
+                        .split(grid_area);
+                        
+                    let col_constraints = vec![Constraint::Percentage((100 / columns) as u16); columns];
+                    
+                    let mut pane_idx = 0;
+                    for r in 0..rows {
+                        let col_chunks = Layout::default()
+                            .direction(Direction::Horizontal)
+                            .constraints(col_constraints.clone())
+                            .split(row_chunks[r]);
+                            
+                        for c in 0..columns {
+                            if pane_idx >= pane_count {
+                                break;
+                            }
+                            let pane = &panes[pane_idx];
+                            let chunk = col_chunks[c];
+                            
+                            let mut pane_lines = Vec::new();
+                            
+                            let pane_title = if pane.active {
+                                Span::styled(format!(" pane {} ", pane_idx), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                            } else {
+                                Span::styled(format!(" pane {} ", pane_idx), Style::default().fg(Color::DarkGray))
+                            };
+                            
+                            let pane_block = Block::default()
+                                .title(pane_title)
+                                .borders(Borders::ALL)
+                                .border_style(if pane.active { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::DarkGray) });
+                                
+                            let pane_height = chunk.height.saturating_sub(2) as usize;
+                            let start = pane.lines.len().saturating_sub(pane_height);
+                            for line in pane.lines.iter().skip(start) {
+                                let trunc_line = truncate_ansi(line, chunk.width.saturating_sub(2) as usize);
+                                pane_lines.push(ansi_to_line(&trunc_line));
+                            }
+                            
+                            let pane_paragraph = Paragraph::new(pane_lines)
+                                .block(pane_block)
+                                .wrap(Wrap { trim: false });
+                                
+                            frame.render_widget(pane_paragraph, chunk);
+                            pane_idx += 1;
+                        }
+                    }
+                    
+                    return; // early return because we handled our own rendering!
+                }
+            }
         }
     }
 
@@ -224,7 +306,7 @@ pub fn render_card(
             highlight: current_attached,
             bottom_title: session_status_span(session.attached),
             header,
-            preview: &session.preview,
+            preview: PreviewData::Single(&session.preview),
             preview_error: session.preview_error.as_deref(),
         },
         selected,
@@ -251,7 +333,7 @@ pub fn render_window_card(
             highlight: window.active,
             bottom_title: window_status_span(window.active),
             header,
-            preview: &window.preview,
+            preview: PreviewData::Grid(&window.panes),
             preview_error: window.preview_error.as_deref(),
         },
         selected,
