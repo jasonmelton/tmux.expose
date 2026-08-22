@@ -87,6 +87,76 @@ impl Drop for TerminalGuard {
     }
 }
 
+fn execute_switch(app: &mut App) -> bool {
+    if !app.should_switch {
+        return false;
+    }
+
+    if app.is_zoomed() {
+        if let Some(target) = app.selected_target() {
+            match tmux::switch_client(&target) {
+                Ok(()) => true,
+                Err(error) => {
+                    let hint = if app.vim_keys {
+                        "Press q to quit or Esc to return."
+                    } else {
+                        "Press Esc to return or Ctrl-C to quit."
+                    };
+                    app.error = Some(format!("{error}\n\n{hint}"));
+                    app.should_switch = false;
+                    false
+                }
+            }
+        } else {
+            app.should_switch = false;
+            false
+        }
+    } else if let Some(session) = app.selected_session() {
+        let selected_name = session.name.clone();
+        let selected_target = session.id.clone();
+        if app.current_session_name.as_deref() == Some(selected_name.as_str()) {
+            return true;
+        }
+
+        match tmux::switch_client(&selected_target) {
+            Ok(()) => true,
+            Err(error) => {
+                let hint = if app.vim_keys {
+                    "Press q or Esc to quit."
+                } else {
+                    "Press Esc to quit."
+                };
+                app.error = Some(format!("{error}\n\n{hint}"));
+                app.should_switch = false;
+                false
+            }
+        }
+    } else {
+        app.should_switch = false;
+        false
+    }
+}
+
+fn refresh_zoomed_windows(app: &mut App, current_session_id: Option<&str>) {
+    if let Some(session) = app.zoomed_session() {
+        let session_id = session.id.clone();
+        match tmux::list_windows(&session_id, current_session_id) {
+            Ok(windows) => {
+                app.set_windows_for_zoomed_session(windows);
+                app.error = None;
+            }
+            Err(error) => {
+                let hint = if app.vim_keys {
+                    "Press q to quit or Esc to return."
+                } else {
+                    "Press Esc to return or Ctrl-C to quit."
+                };
+                app.error = Some(format!("{error}\n\n{hint}"));
+            }
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -96,7 +166,12 @@ fn main() -> Result<()> {
         Ok(sessions) => App::new(sessions, current_session_name),
         Err(error) => {
             let mut app = App::new(Vec::new(), current_session_name);
-            app.error = Some(format!("{error}\n\nPress q or Esc to quit."));
+            let hint = if cli.vim {
+                "Press q or Esc to quit."
+            } else {
+                "Press Esc to quit."
+            };
+            app.error = Some(format!("{error}\n\n{hint}"));
             app
         }
     };
@@ -121,6 +196,12 @@ fn main() -> Result<()> {
     let toggle_key = env::var("TMUX_EXPOSE_TOGGLE_KEY")
         .ok()
         .and_then(|key| input::ToggleKey::from_tmux_key(&key));
+    let (zoom_key, zoom_key_str) = input::resolve_zoom_key(
+        env::var("TMUX_EXPOSE_ZOOM_KEY").ok().as_deref(),
+        toggle_key,
+        app.vim_keys,
+    );
+    app.zoom_key = zoom_key_str;
     let mut last_refresh = Instant::now();
 
     loop {
@@ -132,24 +213,8 @@ fn main() -> Result<()> {
             break;
         }
 
-        if app.should_switch {
-            if let Some(session) = app.selected_session() {
-                let selected_name = session.name.clone();
-                let selected_target = session.id.clone();
-                if app.current_session_name.as_deref() == Some(selected_name.as_str()) {
-                    break;
-                }
-
-                match tmux::switch_client(&selected_target) {
-                    Ok(()) => break,
-                    Err(error) => {
-                        app.error = Some(format!("{error}\n\nPress q or Esc to quit."));
-                        app.should_switch = false;
-                    }
-                }
-            } else {
-                app.should_switch = false;
-            }
+        if app.should_switch && execute_switch(&mut app) {
+            break;
         }
 
         if event::poll(Duration::from_millis(50))? {
@@ -157,13 +222,20 @@ fn main() -> Result<()> {
                 Event::Key(key)
                     if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
                 {
-                    let columns = current_columns(
-                        &terminal,
-                        app.visible_session_count(),
-                        cli.thumbnail_width,
-                        forced_columns,
-                    )?;
-                    input::handle_key_with_toggle(&mut app, key, columns, toggle_key);
+                    let count = if app.is_zoomed() {
+                        app.visible_window_count()
+                    } else {
+                        app.visible_session_count()
+                    };
+                    let columns =
+                        current_columns(&terminal, count, cli.thumbnail_width, forced_columns)?;
+                    input::handle_key_with_toggle(&mut app, key, columns, toggle_key, zoom_key);
+                    if app.should_switch && execute_switch(&mut app) {
+                        break;
+                    }
+                    if app.is_zoomed() && app.windows.is_empty() && app.error.is_none() {
+                        refresh_zoomed_windows(&mut app, current_session_id.as_deref());
+                    }
                 }
                 Event::Mouse(mouse) => {
                     let grid_area = current_grid_area(&terminal)?;
@@ -174,6 +246,9 @@ fn main() -> Result<()> {
                         cli.thumbnail_width,
                         forced_columns,
                     );
+                    if app.should_switch && execute_switch(&mut app) {
+                        break;
+                    }
                 }
                 Event::Resize(_, _) => {}
                 _ => {}
@@ -181,16 +256,42 @@ fn main() -> Result<()> {
         }
 
         if last_refresh.elapsed() >= refresh_interval {
-            match tmux::list_sessions_skipping_preview_for(current_session_id.as_deref()) {
-                Ok(sessions) => {
-                    app.replace_sessions_preserving_preview_for(
-                        sessions,
-                        current_session_id.as_deref(),
-                    );
-                    app.error = None;
+            if app.is_zoomed() {
+                match tmux::list_sessions_metadata() {
+                    Ok(sessions) => {
+                        app.replace_sessions_preserving_all_previews(sessions);
+                        if app.is_zoomed() {
+                            refresh_zoomed_windows(&mut app, current_session_id.as_deref());
+                        } else {
+                            app.error = None;
+                        }
+                    }
+                    Err(error) => {
+                        let hint = if app.vim_keys {
+                            "Press q or Esc to quit."
+                        } else {
+                            "Press Esc to quit."
+                        };
+                        app.error = Some(format!("{error}\n\n{hint}"));
+                    }
                 }
-                Err(error) => {
-                    app.error = Some(format!("{error}\n\nPress q or Esc to quit."));
+            } else {
+                match tmux::list_sessions_skipping_preview_for(current_session_id.as_deref()) {
+                    Ok(sessions) => {
+                        app.replace_sessions_preserving_preview_for(
+                            sessions,
+                            current_session_id.as_deref(),
+                        );
+                        app.error = None;
+                    }
+                    Err(error) => {
+                        let hint = if app.vim_keys {
+                            "Press q or Esc to quit."
+                        } else {
+                            "Press Esc to quit."
+                        };
+                        app.error = Some(format!("{error}\n\n{hint}"));
+                    }
                 }
             }
             last_refresh = Instant::now();

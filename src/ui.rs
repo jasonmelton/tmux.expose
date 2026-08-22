@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
-use crate::model::{App, Session};
+use crate::model::{App, Session, Window};
 
 pub const MIN_CARD_WIDTH: u16 = 32;
 pub const MIN_CARD_HEIGHT: u16 = 10;
@@ -69,7 +69,9 @@ pub fn render(
             chunks[0],
             "No tmux sessions found.\nPress q or Esc to quit.",
         );
-    } else if app.visible_session_count() == 0 {
+    } else if app.is_zoomed() && app.windows.is_empty() {
+        render_centered_message(frame, chunks[0], "No windows in session");
+    } else if !app.is_zoomed() && app.visible_session_count() == 0 {
         render_centered_message(frame, chunks[0], "No matching sessions");
     } else {
         render_grid(
@@ -82,7 +84,12 @@ pub fn render(
         );
     }
 
-    let footer = Paragraph::new(footer_hint_line(app.search_text(), app.vim_keys));
+    let footer = Paragraph::new(footer_hint_line(
+        app.is_zoomed(),
+        app.search_text(),
+        app.vim_keys,
+        &app.zoom_key,
+    ));
     frame.render_widget(footer, chunks[1]);
 }
 
@@ -94,73 +101,92 @@ pub fn render_grid(
     min_card_width: Option<u16>,
     forced_columns: Option<usize>,
 ) {
-    let sessions = app.visible_sessions();
-    let grid = calculate_grid(area, sessions.len(), min_card_width, forced_columns);
+    if app.is_zoomed() {
+        let grid = calculate_grid(area, app.windows.len(), min_card_width, forced_columns);
+        for (index, card_area) in grid.cards.iter().enumerate() {
+            if let Some(window) = app.windows.get(index) {
+                render_window_card(
+                    frame,
+                    window,
+                    index == app.selected_window_index,
+                    colors,
+                    *card_area,
+                );
+            }
+        }
+    } else {
+        let sessions = app.visible_sessions();
+        let grid = calculate_grid(area, sessions.len(), min_card_width, forced_columns);
 
-    for (index, card_area) in grid.cards.iter().enumerate() {
-        if let Some(session) = sessions.get(index) {
-            let current_attached = session.attached
-                && app.current_session_name.as_deref() == Some(session.name.as_str());
-            render_card(
-                frame,
-                session,
-                index == app.selected_index,
-                current_attached,
-                colors,
-                *card_area,
-            );
+        for (index, card_area) in grid.cards.iter().enumerate() {
+            if let Some(session) = sessions.get(index) {
+                let current_attached = session.attached
+                    && app.current_session_name.as_deref() == Some(session.name.as_str());
+                render_card(
+                    frame,
+                    session,
+                    index == app.selected_index,
+                    current_attached,
+                    colors,
+                    *card_area,
+                );
+            }
         }
     }
 }
 
-pub fn render_card(
+struct CardData<'a> {
+    title: &'a str,
+    highlight: bool,
+    bottom_title: Span<'static>,
+    header: Line<'static>,
+    preview: &'a [String],
+    preview_error: Option<&'a str>,
+}
+
+fn render_card_inner(
     frame: &mut Frame<'_>,
-    session: &Session,
+    card: CardData<'_>,
     selected: bool,
-    current_attached: bool,
     colors: CardColors,
     area: Rect,
 ) {
     let title = format!(
         " {} ",
-        truncate(&session.name, area.width.saturating_sub(12) as usize)
+        truncate(card.title, area.width.saturating_sub(12) as usize)
     );
     let block = Block::default()
         .title(Span::styled(
             title,
-            card_title_style(selected, current_attached, colors),
+            card_title_style(selected, card.highlight, colors),
         ))
-        .title_bottom(session_status_span(session.attached))
+        .title_bottom(card.bottom_title)
         .borders(Borders::ALL)
         .border_type(if selected {
             BorderType::Double
         } else {
             BorderType::Plain
         })
-        .border_style(card_border_style(selected, current_attached, colors));
+        .border_style(card_border_style(selected, card.highlight, colors));
 
     let preview_height = area.height.saturating_sub(5) as usize;
     let mut lines = Vec::new();
-    let window = session.current_window.as_deref().unwrap_or("unknown");
-    lines.push(Line::from(vec![Span::styled(
-        format!("{} · {} windows", window, session.window_count),
-        Style::default().fg(Color::Cyan),
-    )]));
+    lines.push(card.header);
     lines.push(Line::from(""));
 
-    if session.preview_error.is_some() {
+    if card.preview_error.is_some() {
         lines.push(Line::from(Span::styled(
             "Preview unavailable",
             Style::default().fg(Color::Red),
         )));
-    } else if session.preview.is_empty() {
+    } else if card.preview.is_empty() {
         lines.push(Line::from(Span::styled(
             "No visible content",
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        let start = session.preview.len().saturating_sub(preview_height);
-        for line in session.preview.iter().skip(start) {
+        let start = card.preview.len().saturating_sub(preview_height);
+        for line in card.preview.iter().skip(start) {
             let line = truncate_ansi(line, area.width.saturating_sub(4) as usize);
             lines.push(ansi_to_line(&line));
         }
@@ -176,6 +202,62 @@ pub fn render_card(
         });
 
     frame.render_widget(paragraph, area);
+}
+
+pub fn render_card(
+    frame: &mut Frame<'_>,
+    session: &Session,
+    selected: bool,
+    current_attached: bool,
+    colors: CardColors,
+    area: Rect,
+) {
+    let window = session.current_window.as_deref().unwrap_or("unknown");
+    let header = Line::from(vec![Span::styled(
+        format!("{} · {} windows", window, session.window_count),
+        Style::default().fg(Color::Cyan),
+    )]);
+    render_card_inner(
+        frame,
+        CardData {
+            title: &session.name,
+            highlight: current_attached,
+            bottom_title: session_status_span(session.attached),
+            header,
+            preview: &session.preview,
+            preview_error: session.preview_error.as_deref(),
+        },
+        selected,
+        colors,
+        area,
+    );
+}
+
+pub fn render_window_card(
+    frame: &mut Frame<'_>,
+    window: &Window,
+    selected: bool,
+    colors: CardColors,
+    area: Rect,
+) {
+    let header = Line::from(vec![Span::styled(
+        format!("window {}", window.index),
+        Style::default().fg(Color::Cyan),
+    )]);
+    render_card_inner(
+        frame,
+        CardData {
+            title: &window.name,
+            highlight: window.active,
+            bottom_title: window_status_span(window.active),
+            header,
+            preview: &window.preview,
+            preview_error: window.preview_error.as_deref(),
+        },
+        selected,
+        colors,
+        area,
+    );
 }
 
 fn card_title_style(selected: bool, current_attached: bool, colors: CardColors) -> Style {
@@ -219,7 +301,57 @@ fn session_status_span(attached: bool) -> Span<'static> {
     }
 }
 
-fn footer_hint_line(search_query: Option<&str>, vim_keys: bool) -> Line<'static> {
+fn window_status_span(active: bool) -> Span<'static> {
+    if active {
+        Span::styled(
+            " active ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(" inactive ", Style::default().fg(Color::DarkGray))
+    }
+}
+
+fn footer_hint_line(
+    is_zoomed: bool,
+    search_query: Option<&str>,
+    vim_keys: bool,
+    zoom_key: &str,
+) -> Line<'static> {
+    let zoom_label = if zoom_key.is_empty() {
+        "Esc".to_string()
+    } else {
+        format!("{zoom_key}/Esc")
+    };
+
+    if is_zoomed {
+        return if vim_keys {
+            Line::from(vec![
+                hint_key("hjkl"),
+                hint_text(" to move · "),
+                hint_key(zoom_label),
+                hint_text(" to zoom out · "),
+                hint_key("Enter"),
+                hint_text(" to switch · "),
+                hint_key("q"),
+                hint_text(" to quit"),
+            ])
+        } else {
+            Line::from(vec![
+                hint_key("↑/↓/←/→"),
+                hint_text(" to move · "),
+                hint_key(zoom_label),
+                hint_text(" to zoom out · "),
+                hint_key("Enter"),
+                hint_text(" to switch · "),
+                hint_key("Ctrl-C"),
+                hint_text(" to quit"),
+            ])
+        };
+    }
+
     match (vim_keys, search_query) {
         // Vim SEARCH mode: typing filters, Esc returns to NORMAL.
         (true, Some(query)) => Line::from(vec![
@@ -233,16 +365,22 @@ fn footer_hint_line(search_query: Option<&str>, vim_keys: bool) -> Line<'static>
             hint_text(" for normal"),
         ]),
         // Vim NORMAL mode: hjkl/arrows move, `/` searches.
-        (true, None) => Line::from(vec![
-            hint_key("hjkl"),
-            hint_text(" to move · "),
-            hint_key("/"),
-            hint_text(" to search · "),
-            hint_key("Enter"),
-            hint_text(" to switch · "),
-            hint_key("q/Esc"),
-            hint_text(" to quit"),
-        ]),
+        (true, None) => {
+            let mut spans = vec![hint_key("hjkl"), hint_text(" to move · ")];
+            if !zoom_key.is_empty() {
+                spans.push(hint_key(zoom_key.to_string()));
+                spans.push(hint_text(" to zoom · "));
+            }
+            spans.extend([
+                hint_key("/"),
+                hint_text(" to search · "),
+                hint_key("Enter"),
+                hint_text(" to switch · "),
+                hint_key("q/Esc"),
+                hint_text(" to quit"),
+            ]);
+            Line::from(spans)
+        }
         (false, Some(query)) => Line::from(vec![
             Span::styled(format!("Search: {query}"), Style::default().fg(Color::Cyan)),
             hint_text(" · type to filter · "),
@@ -255,21 +393,30 @@ fn footer_hint_line(search_query: Option<&str>, vim_keys: bool) -> Line<'static>
             hint_key("Esc"),
             hint_text(" to clear"),
         ]),
-        (false, None) => Line::from(vec![
-            hint_text("type to filter · "),
-            hint_key("↑/↓/←/→"),
-            hint_text(" to move · "),
-            hint_key("Enter"),
-            hint_text(" to switch · "),
-            hint_key("Esc/Ctrl-C"),
-            hint_text(" to quit"),
-        ]),
+        (false, None) => {
+            let mut spans = vec![
+                hint_text("type to filter · "),
+                hint_key("↑/↓/←/→"),
+                hint_text(" to move · "),
+            ];
+            if !zoom_key.is_empty() {
+                spans.push(hint_key(zoom_key.to_string()));
+                spans.push(hint_text(" to zoom · "));
+            }
+            spans.extend([
+                hint_key("Enter"),
+                hint_text(" to switch · "),
+                hint_key("Esc/Ctrl-C"),
+                hint_text(" to quit"),
+            ]);
+            Line::from(spans)
+        }
     }
 }
 
-fn hint_key(value: &'static str) -> Span<'static> {
+fn hint_key(value: impl Into<String>) -> Span<'static> {
     Span::styled(
-        value,
+        value.into(),
         Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
@@ -732,7 +879,7 @@ mod tests {
 
     #[test]
     fn footer_highlights_shortcuts_only() {
-        let line = footer_hint_line(None, false);
+        let line = footer_hint_line(false, None, false, "z");
 
         let shortcut_spans: Vec<&Span<'_>> = line
             .spans
@@ -744,7 +891,7 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect();
 
-        assert_eq!(shortcut_text, vec!["↑/↓/←/→", "Enter", "Esc/Ctrl-C"]);
+        assert_eq!(shortcut_text, vec!["↑/↓/←/→", "z", "Enter", "Esc/Ctrl-C"]);
         assert!(
             shortcut_spans
                 .iter()
@@ -760,7 +907,7 @@ mod tests {
 
     #[test]
     fn search_footer_highlights_search_shortcuts() {
-        let line = footer_hint_line(Some("api"), false);
+        let line = footer_hint_line(false, Some("api"), false, "z");
 
         let shortcut_text: Vec<&str> = line
             .spans
@@ -776,7 +923,7 @@ mod tests {
 
     #[test]
     fn vim_normal_footer_highlights_vim_shortcuts() {
-        let line = footer_hint_line(None, true);
+        let line = footer_hint_line(false, None, true, "z");
 
         let shortcut_text: Vec<&str> = line
             .spans
@@ -785,12 +932,12 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect();
 
-        assert_eq!(shortcut_text, vec!["hjkl", "/", "Enter", "q/Esc"]);
+        assert_eq!(shortcut_text, vec!["hjkl", "z", "/", "Enter", "q/Esc"]);
     }
 
     #[test]
     fn vim_search_footer_offers_return_to_normal() {
-        let line = footer_hint_line(Some("api"), true);
+        let line = footer_hint_line(false, Some("api"), true, "z");
 
         let shortcut_text: Vec<&str> = line
             .spans
@@ -801,6 +948,30 @@ mod tests {
 
         assert_eq!(shortcut_text, vec!["Backspace", "Enter", "Esc"]);
         assert_eq!(line.spans[0].content, "Search: api");
+    }
+
+    #[test]
+    fn zoomed_footer_highlights_zoom_out_shortcuts() {
+        let default_zoomed = footer_hint_line(true, None, false, "z");
+        let default_shortcuts: Vec<&str> = default_zoomed
+            .spans
+            .iter()
+            .filter(|span| span.style.fg == Some(Color::Yellow))
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(
+            default_shortcuts,
+            vec!["↑/↓/←/→", "z/Esc", "Enter", "Ctrl-C"]
+        );
+
+        let vim_zoomed = footer_hint_line(true, None, true, "z");
+        let vim_shortcuts: Vec<&str> = vim_zoomed
+            .spans
+            .iter()
+            .filter(|span| span.style.fg == Some(Color::Yellow))
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(vim_shortcuts, vec!["hjkl", "z/Esc", "Enter", "q"]);
     }
 
     #[test]
@@ -821,5 +992,47 @@ mod tests {
         let truncated = truncate_ansi("\u{1b}[31mred\u{1b}[0m plain", 5);
 
         assert_eq!(truncated, "\u{1b}[31mred\u{1b}[0m p");
+    }
+
+    #[test]
+    fn footer_renders_custom_zoom_key() {
+        let normal_line = footer_hint_line(false, None, false, "x");
+        let shortcut_text: Vec<&str> = normal_line
+            .spans
+            .iter()
+            .filter(|span| span.style.fg == Some(Color::Yellow))
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(shortcut_text, vec!["↑/↓/←/→", "x", "Enter", "Esc/Ctrl-C"]);
+
+        let zoomed_line = footer_hint_line(true, None, false, "x");
+        let zoomed_shortcuts: Vec<&str> = zoomed_line
+            .spans
+            .iter()
+            .filter(|span| span.style.fg == Some(Color::Yellow))
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(
+            zoomed_shortcuts,
+            vec!["↑/↓/←/→", "x/Esc", "Enter", "Ctrl-C"]
+        );
+
+        let vim_normal = footer_hint_line(false, None, true, "M-z");
+        let vim_shortcuts: Vec<&str> = vim_normal
+            .spans
+            .iter()
+            .filter(|span| span.style.fg == Some(Color::Yellow))
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(vim_shortcuts, vec!["hjkl", "M-z", "/", "Enter", "q/Esc"]);
+
+        let vim_zoomed = footer_hint_line(true, None, true, "M-z");
+        let vim_zoomed_shortcuts: Vec<&str> = vim_zoomed
+            .spans
+            .iter()
+            .filter(|span| span.style.fg == Some(Color::Yellow))
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(vim_zoomed_shortcuts, vec!["hjkl", "M-z/Esc", "Enter", "q"]);
     }
 }

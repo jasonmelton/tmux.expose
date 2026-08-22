@@ -10,6 +10,16 @@ pub struct Session {
     pub preview_error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Window {
+    pub id: String,
+    pub index: u32,
+    pub name: String,
+    pub active: bool,
+    pub preview: Vec<String>,
+    pub preview_error: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct App {
     pub sessions: Vec<Session>,
@@ -20,7 +30,11 @@ pub struct App {
     pub error: Option<String>,
     /// When true, the picker uses modal vim navigation (hjkl to move, `/` to search).
     pub vim_keys: bool,
+    pub zoom_key: String,
     search_query: Option<String>,
+    pub zoomed_session: Option<String>,
+    pub windows: Vec<Window>,
+    pub selected_window_index: usize,
 }
 
 impl App {
@@ -38,7 +52,85 @@ impl App {
             should_switch: false,
             error: None,
             vim_keys: false,
+            zoom_key: "z".to_string(),
             search_query: None,
+            zoomed_session: None,
+            windows: Vec::new(),
+            selected_window_index: 0,
+        }
+    }
+
+    pub fn is_zoomed(&self) -> bool {
+        self.zoomed_session.is_some()
+    }
+
+    pub fn zoomed_session(&self) -> Option<&Session> {
+        let target = self.zoomed_session.as_ref()?;
+        self.sessions
+            .iter()
+            .find(|session| &session.id == target)
+            .or_else(|| self.sessions.iter().find(|session| &session.name == target))
+    }
+
+    pub fn toggle_zoom(&mut self) {
+        if self.is_zoomed() {
+            let selected_name = self.zoomed_session().map(|s| s.name.clone());
+            self.zoomed_session = None;
+            self.windows.clear();
+            self.selected_window_index = 0;
+            if let Some(error) = &self.error
+                && !error.contains("list-sessions")
+            {
+                self.error = None;
+            }
+            if let Some(name) = selected_name
+                && let Some(pos) = self
+                    .visible_sessions()
+                    .into_iter()
+                    .position(|s| s.name == name)
+            {
+                self.selected_index = pos;
+            }
+        } else if let Some(session) = self.selected_session() {
+            let session_id = session.id.clone();
+            self.clear_search();
+            if let Some(error) = &self.error
+                && !error.contains("list-sessions")
+            {
+                self.error = None;
+            }
+            self.zoomed_session = Some(session_id);
+            self.selected_window_index = 0;
+        }
+    }
+
+    pub fn set_windows_for_zoomed_session(&mut self, windows: Vec<Window>) {
+        let selected_id = self.selected_window().map(|w| w.id.clone());
+        self.windows = windows;
+        if self.windows.is_empty() {
+            self.selected_window_index = 0;
+            return;
+        }
+        self.selected_window_index = selected_id
+            .and_then(|id| self.windows.iter().position(|w| w.id == id))
+            .or_else(|| self.windows.iter().position(|w| w.active))
+            .unwrap_or(0);
+        self.selected_index = self.selected_window_index;
+    }
+
+    pub fn visible_window_count(&self) -> usize {
+        self.windows.len()
+    }
+
+    pub fn selected_window(&self) -> Option<&Window> {
+        self.windows.get(self.selected_window_index)
+    }
+
+    pub fn selected_target(&self) -> Option<String> {
+        if self.is_zoomed() {
+            self.selected_window().map(|w| w.id.clone())
+        } else {
+            self.selected_session().map(|s| s.id.clone())
         }
     }
 
@@ -94,21 +186,44 @@ impl App {
     }
 
     pub fn replace_sessions(&mut self, sessions: Vec<Session>) {
-        let selected_name = self.selected_session().map(|session| session.name.clone());
+        let selected_name = if self.is_zoomed() {
+            self.zoomed_session().map(|session| session.name.clone())
+        } else {
+            self.selected_session().map(|session| session.name.clone())
+        };
         self.sessions = sessions;
 
         if self.visible_session_count() == 0 {
             self.selected_index = 0;
+            if self.is_zoomed() {
+                self.zoomed_session = None;
+                self.windows.clear();
+                self.selected_window_index = 0;
+            }
             return;
         }
 
-        self.selected_index = selected_name
-            .and_then(|name| {
-                self.visible_sessions()
-                    .into_iter()
-                    .position(|session| session.name == name)
-            })
-            .unwrap_or_else(|| self.selected_index.min(self.visible_session_count() - 1));
+        if self.is_zoomed() {
+            if self.zoomed_session().is_none() {
+                self.zoomed_session = None;
+                self.windows.clear();
+                self.selected_window_index = 0;
+                self.selected_index = self
+                    .selected_index
+                    .min(self.visible_session_count().saturating_sub(1));
+            }
+        } else {
+            self.selected_index = selected_name
+                .and_then(|name| {
+                    self.visible_sessions()
+                        .into_iter()
+                        .position(|session| session.name == name)
+                })
+                .unwrap_or_else(|| {
+                    self.selected_index
+                        .min(self.visible_session_count().saturating_sub(1))
+                });
+        }
     }
 
     pub fn replace_sessions_preserving_preview_for(
@@ -132,37 +247,80 @@ impl App {
         self.replace_sessions(sessions);
     }
 
+    pub fn replace_sessions_preserving_all_previews(&mut self, mut sessions: Vec<Session>) {
+        for session in &mut sessions {
+            if let Some(previous) = self.sessions.iter_mut().find(|s| s.id == session.id) {
+                session.preview = std::mem::take(&mut previous.preview);
+                session.preview_error = previous.preview_error.take();
+                if session.current_window.is_none() {
+                    session.current_window = previous.current_window.take();
+                }
+            }
+        }
+        self.replace_sessions(sessions);
+    }
+
     pub fn move_left(&mut self) {
-        if self.selected_index > 0 {
+        if self.is_zoomed() {
+            if self.selected_window_index > 0 {
+                self.selected_window_index -= 1;
+                self.selected_index = self.selected_window_index;
+            }
+        } else if self.selected_index > 0 {
             self.selected_index -= 1;
         }
     }
 
     pub fn move_right(&mut self) {
-        if self.selected_index + 1 < self.visible_session_count() {
+        if self.is_zoomed() {
+            if self.selected_window_index + 1 < self.visible_window_count() {
+                self.selected_window_index += 1;
+                self.selected_index = self.selected_window_index;
+            }
+        } else if self.selected_index + 1 < self.visible_session_count() {
             self.selected_index += 1;
         }
     }
 
     pub fn move_up(&mut self, columns: usize) {
         let columns = columns.max(1);
-        if self.selected_index >= columns {
+        if self.is_zoomed() {
+            if self.selected_window_index >= columns {
+                self.selected_window_index -= columns;
+                self.selected_index = self.selected_window_index;
+            }
+        } else if self.selected_index >= columns {
             self.selected_index -= columns;
         }
     }
 
     pub fn move_down(&mut self, columns: usize) {
         let columns = columns.max(1);
-        let visible_count = self.visible_session_count();
-        if visible_count == 0 {
+        let count = if self.is_zoomed() {
+            self.visible_window_count()
+        } else {
+            self.visible_session_count()
+        };
+        if count == 0 {
             return;
         }
 
-        let last_index = visible_count - 1;
-        let current_row = self.selected_index / columns;
+        let last_index = count - 1;
+        let current_index = if self.is_zoomed() {
+            self.selected_window_index
+        } else {
+            self.selected_index
+        };
+        let current_row = current_index / columns;
         let last_row = last_index / columns;
         if current_row < last_row {
-            self.selected_index = self.selected_index.saturating_add(columns).min(last_index);
+            let new_index = current_index.saturating_add(columns).min(last_index);
+            if self.is_zoomed() {
+                self.selected_window_index = new_index;
+                self.selected_index = new_index;
+            } else {
+                self.selected_index = new_index;
+            }
         }
     }
 }
@@ -192,6 +350,17 @@ mod tests {
             window_count: 1,
             current_window: None,
             last_activity: None,
+            preview: Vec::new(),
+            preview_error: None,
+        }
+    }
+
+    fn window(id: &str, index: u32, name: &str, active: bool) -> Window {
+        Window {
+            id: id.to_string(),
+            index,
+            name: name.to_string(),
+            active,
             preview: Vec::new(),
             preview_error: None,
         }
@@ -341,5 +510,146 @@ mod tests {
         app.move_down(3);
 
         assert_eq!(app.selected_index, 4);
+    }
+
+    #[test]
+    fn zoomed_window_navigation_and_selection() {
+        let mut app = App::new(vec![session("dev")], None);
+        assert!(!app.is_zoomed());
+        assert_eq!(app.selected_target().as_deref(), Some("$dev"));
+
+        app.toggle_zoom();
+        assert!(app.is_zoomed());
+        assert_eq!(app.zoomed_session().map(|s| s.name.as_str()), Some("dev"));
+
+        app.set_windows_for_zoomed_session(vec![
+            window("@1", 0, "bash", false),
+            window("@2", 1, "editor", true),
+            window("@3", 2, "logs", false),
+        ]);
+
+        assert_eq!(app.visible_window_count(), 3);
+        assert_eq!(app.selected_window_index, 1);
+        assert_eq!(app.selected_index, 1);
+        assert_eq!(app.selected_target().as_deref(), Some("@2"));
+
+        app.move_right();
+        assert_eq!(app.selected_window_index, 2);
+        assert_eq!(app.selected_index, 2);
+        assert_eq!(app.selected_target().as_deref(), Some("@3"));
+
+        app.move_left();
+        assert_eq!(app.selected_window_index, 1);
+        assert_eq!(app.selected_index, 1);
+
+        app.move_up(2);
+        assert_eq!(app.selected_window_index, 1);
+        assert_eq!(app.selected_index, 1);
+
+        app.toggle_zoom();
+        assert!(!app.is_zoomed());
+        assert_eq!(app.selected_target().as_deref(), Some("$dev"));
+        assert_eq!(app.visible_window_count(), 0);
+    }
+
+    #[test]
+    fn zoom_out_clears_windows_and_prevents_stale_ids_across_sessions() {
+        let mut app = App::new(vec![session("dev"), session("prod")], None);
+        app.selected_index = 0;
+        app.toggle_zoom();
+        assert!(app.is_zoomed());
+
+        app.set_windows_for_zoomed_session(vec![
+            window("@1", 0, "bash", true),
+            window("@2", 1, "editor", false),
+        ]);
+        assert_eq!(app.visible_window_count(), 2);
+        assert_eq!(app.selected_target().as_deref(), Some("@1"));
+
+        // Zoom out
+        app.toggle_zoom();
+        assert!(!app.is_zoomed());
+        assert_eq!(app.visible_window_count(), 0);
+        assert_eq!(app.selected_target().as_deref(), Some("$dev"));
+
+        // Move to session "prod" and zoom in
+        app.selected_index = 1;
+        app.toggle_zoom();
+        assert!(app.is_zoomed());
+        assert_eq!(app.zoomed_session().unwrap().name, "prod");
+        // Windows list is empty until fetched for "prod" - no stale windows from "dev"
+        assert_eq!(app.visible_window_count(), 0);
+        assert_eq!(app.selected_target(), None);
+
+        app.set_windows_for_zoomed_session(vec![window("@3", 0, "server", true)]);
+        assert_eq!(app.visible_window_count(), 1);
+        assert_eq!(app.selected_target().as_deref(), Some("@3"));
+    }
+
+    #[test]
+    fn replace_sessions_clears_zoom_and_windows_if_zoomed_session_disappears() {
+        let mut app = App::new(vec![session("dev"), session("prod")], None);
+        app.toggle_zoom();
+        app.set_windows_for_zoomed_session(vec![window("@1", 0, "bash", true)]);
+        assert!(app.is_zoomed());
+
+        // Replace sessions with list not containing "dev"
+        app.replace_sessions(vec![session("prod")]);
+        assert!(!app.is_zoomed());
+        assert_eq!(app.visible_window_count(), 0);
+    }
+
+    #[test]
+    fn zoomed_session_resolves_exact_id_over_colliding_name() {
+        let session_colliding = Session {
+            id: "$0".to_string(),
+            name: "$1".to_string(),
+            attached: false,
+            window_count: 1,
+            current_window: None,
+            last_activity: None,
+            preview: Vec::new(),
+            preview_error: None,
+        };
+        let session_target = Session {
+            id: "$1".to_string(),
+            name: "work".to_string(),
+            attached: false,
+            window_count: 2,
+            current_window: None,
+            last_activity: None,
+            preview: Vec::new(),
+            preview_error: None,
+        };
+        let mut app = App::new(vec![session_colliding, session_target], None);
+        app.zoomed_session = Some("$1".to_string());
+
+        assert_eq!(app.zoomed_session().unwrap().name, "work");
+        assert_eq!(app.zoomed_session().unwrap().id, "$1");
+    }
+
+    #[test]
+    fn toggle_zoom_clears_window_error_on_zoom_out() {
+        let mut app = App::new(vec![session("dev")], None);
+        app.toggle_zoom();
+        app.error = Some("window fetch error".to_string());
+
+        app.toggle_zoom();
+        assert!(!app.is_zoomed());
+        assert_eq!(app.error, None);
+    }
+
+    #[test]
+    fn toggle_zoom_preserves_session_refresh_error_on_zoom_out() {
+        let mut app = App::new(vec![session("dev")], None);
+        app.toggle_zoom();
+        app.error = Some("tmux list-sessions failed: connection refused".to_string());
+
+        app.toggle_zoom();
+        assert!(!app.is_zoomed());
+        assert_eq!(
+            app.error,
+            Some("tmux list-sessions failed: connection refused".to_string())
+        );
     }
 }

@@ -4,6 +4,7 @@ set -euo pipefail
 
 key="$(tmux show-option -gqv @tmux-expose-key)"
 key_table="$(tmux show-option -gqv @tmux-expose-key-table)"
+zoom_key="$(tmux show-option -gqv @tmux-expose-zoom-key)"
 width="$(tmux show-option -gqv @tmux-expose-width)"
 height="$(tmux show-option -gqv @tmux-expose-height)"
 anchor="$(tmux show-option -gqv @tmux-expose-anchor)"
@@ -20,6 +21,12 @@ if [[ -z "${key}" ]]; then
   key_table="${key_table:-root}"
 else
   key_table="${key_table:-prefix}"
+fi
+
+zoom_key="${zoom_key:-z}"
+if [[ ! "${zoom_key}" =~ ^(M-|C-)?.$ || "${zoom_key}" == "Esc" || "${zoom_key}" == "C-c" ]]; then
+  printf 'tmux.expose: invalid @tmux-expose-zoom-key: %s (must be a single character, M-<char>, or C-<char>; Esc and C-c are reserved)\n' "${zoom_key}" >&2
+  zoom_key="z"
 fi
 
 width="${width:-100%}"
@@ -68,4 +75,4 @@ if [[ -n "${border_style}" ]]; then
   style_args+=(-S "${border_style}")
 fi
 
-tmux bind-key -T "${key_table}" "${key}" display-popup -w "${width}" -h "${height}" "${position_args[@]}" "${style_args[@]}" -e "TMUX_EXPOSE_TOGGLE_KEY=${key}" -E "${command}"
+tmux bind-key -T "${key_table}" "${key}" display-popup -w "${width}" -h "${height}" "${position_args[@]}" "${style_args[@]}" -e "TMUX_EXPOSE_TOGGLE_KEY=${key}" -e "TMUX_EXPOSE_ZOOM_KEY=${zoom_key}" -E "${command}"

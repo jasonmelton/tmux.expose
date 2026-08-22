@@ -31,9 +31,10 @@
 Switching tmux sessions with a list works, but it gives you names instead of context. **tmux.expose** shows every session as a live text thumbnail so you can jump to the right workspace visually.
 
 - **See before switching.** Browse sessions in a responsive grid with live pane previews.
+- **Drill down into windows.** Zoom into any session to preview its individual windows and switch directly to one.
 - **Terminal-native.** A small Rust TUI that runs inside your terminal or a tmux popup.
 - **Color-aware previews.** tmux ANSI colors are preserved in thumbnails.
-- **Fast keyboard flow.** Move with arrows or `hjkl`, switch with `Enter`, leave with `q` or `Esc`.
+- **Fast keyboard flow.** Move with arrows or `hjkl`, zoom with `z`, switch with `Enter`, leave with `q` or `Esc`.
 - **TPM-ready.** Install it as a tmux plugin and launch with `Alt+e`.
 
 ## Install
@@ -76,6 +77,7 @@ Customize the tmux plugin before the `@plugin` line:
 ```tmux
 set -g @tmux-expose-key 'E'
 set -g @tmux-expose-key-table 'prefix'
+set -g @tmux-expose-zoom-key 'z'
 set -g @tmux-expose-width '100%'
 set -g @tmux-expose-height '100%'
 set -g @tmux-expose-anchor 'center'
@@ -89,6 +91,8 @@ set -g @tmux-expose-command 'tmux-expose --columns 2'
 
 set -g @plugin 'cesarferreira/tmux.expose'
 ```
+
+`@tmux-expose-zoom-key` sets the key to toggle window zoom (defaults to `z`). Accepts a single character (e.g. `z`, `x`), `M-<key>`, or `C-<key>`. Esc, C-c, unsupported keys, or conflicts with the popup toggle key or vim normal mode keys (h, j, k, l, /, q) fall back to `z`.
 
 `@tmux-expose-anchor` accepts `center`, `top`, `bottom`, `left`, or `right`. For example,
 use `set -g @tmux-expose-anchor 'bottom'` with `set -g @tmux-expose-height '50%'` to show
@@ -135,9 +139,11 @@ When enabled, the picker starts in **normal** mode:
 | Key | Action |
 |---|---|
 | `h` `j` `k` `l` (or arrows) | Move the selection |
-| `/` | Enter search mode |
-| `Enter` | Switch to the selected session |
-| `q` / `Esc` | Quit |
+| `z` | Zoom into session windows / zoom out to session view |
+| `/` | Enter search mode (when not zoomed) |
+| `Enter` | Switch to the selected session or window |
+| `Esc` | Zoom out (when zoomed) or quit |
+| `q` | Quit |
 
 Pressing `/` enters **search** mode, where typing fuzzy-filters as usual (so `h/j/k/l`
 become text again); `Esc` returns to normal mode and `Enter` switches.
@@ -171,14 +177,14 @@ set -g @plugin 'cesarferreira/tmux.expose'
 It produces a popup equivalent to:
 
 ```bash
-tmux display-popup -w 100% -h 60% -y '#{popup_pane_bottom}' -s 'bg=colour234' -S 'fg=colour245' -e TMUX_EXPOSE_TOGGLE_KEY=s -E "tmux-expose"
+tmux display-popup -w 100% -h 60% -y '#{popup_pane_bottom}' -s 'bg=colour234' -S 'fg=colour245' -e TMUX_EXPOSE_TOGGLE_KEY=s -e TMUX_EXPOSE_ZOOM_KEY=z -E "tmux-expose"
 ```
 
 
 Use a direct binding if you do not use TPM:
 
 ```tmux
-bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -E "tmux-expose"
+bind-key -T root M-e display-popup -w 100% -h 100% -e TMUX_EXPOSE_TOGGLE_KEY=M-e -e TMUX_EXPOSE_ZOOM_KEY=z -E "tmux-expose"
 ```
 
 <a id="quickstart"></a>
@@ -220,12 +226,14 @@ tmux-expose --selected-color cyan --attached-color green --inactive-color white
 
 | Key | Action |
 |---|---|
-| `Type` | Filter sessions by fuzzy name |
+| `Type` | Filter sessions by fuzzy name (when not zoomed) |
 | `Arrow keys` | Move selection |
-| `Mouse click` | Switch to clicked session |
+| `z` | Zoom into session windows / zoom out to session view |
+| `Mouse click` | Switch to clicked session or window |
 | `Backspace` | Edit search query |
 | `Esc` while searching | Clear search |
-| `Enter` | Switch to selected session |
+| `Esc` while zoomed | Zoom out to session view |
+| `Enter` | Switch to selected session or window |
 | `Esc` / `Ctrl-C` | Quit without switching |
 
 Prefer vim keys? See [Vim navigation](#vim-navigation) for an opt-in `hjkl` mode.
