@@ -39,8 +39,52 @@ impl ToggleKey {
     }
 }
 
+fn is_valid_zoom_key(key: ToggleKey, toggle_key: Option<ToggleKey>, vim_keys: bool) -> bool {
+    if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
+        return false;
+    }
+    if key.code == KeyCode::Esc {
+        return false;
+    }
+    if toggle_key == Some(key) {
+        return false;
+    }
+    if vim_keys
+        && key.modifiers == KeyModifiers::NONE
+        && matches!(key.code, KeyCode::Char('h' | 'j' | 'k' | 'l' | '/' | 'q'))
+    {
+        return false;
+    }
+    true
+}
+
+pub fn resolve_zoom_key(
+    raw: Option<&str>,
+    toggle_key: Option<ToggleKey>,
+    vim_keys: bool,
+) -> (Option<ToggleKey>, String) {
+    let default_key = ToggleKey::from_tmux_key("z").unwrap();
+    let default_label = "z".to_string();
+
+    if let Some(s) = raw {
+        let trimmed = s.trim();
+        if !trimmed.is_empty()
+            && let Some(parsed) = ToggleKey::from_tmux_key(trimmed)
+            && is_valid_zoom_key(parsed, toggle_key, vim_keys)
+        {
+            return (Some(parsed), trimmed.to_string());
+        }
+    }
+
+    if is_valid_zoom_key(default_key, toggle_key, vim_keys) {
+        (Some(default_key), default_label)
+    } else {
+        (None, String::new())
+    }
+}
+
 pub fn handle_key(app: &mut App, key: KeyEvent, columns: usize) {
-    handle_key_with_toggle(app, key, columns, None);
+    handle_key_with_toggle(app, key, columns, None, ToggleKey::from_tmux_key("z"));
 }
 
 pub fn handle_key_with_toggle(
@@ -48,6 +92,7 @@ pub fn handle_key_with_toggle(
     key: KeyEvent,
     columns: usize,
     toggle_key: Option<ToggleKey>,
+    zoom_key: Option<ToggleKey>,
 ) {
     if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
         app.should_quit = true;
@@ -66,6 +111,17 @@ pub fn handle_key_with_toggle(
         }
     }
 
+    let is_zoom_match = zoom_key.is_some_and(|zk| zk.matches(key));
+
+    if is_zoom_match {
+        let typeable_during_vim_search =
+            app.vim_keys && app.is_searching() && is_typeable_filter_key(key);
+        if !typeable_during_vim_search {
+            app.toggle_zoom();
+            return;
+        }
+    }
+
     if app.is_searching() {
         handle_search_key(app, key, columns);
         return;
@@ -79,16 +135,24 @@ pub fn handle_key_with_toggle(
     handle_default_key(app, key, columns);
 }
 
-/// Default mode: typing any character immediately fuzzy-filters the list.
+/// Default mode: typing (when not zoomed) fuzzy-filters the list; the zoom key zooms into the selected session.
 fn handle_default_key(app: &mut App, key: KeyEvent, columns: usize) {
     match (key.code, key.modifiers) {
-        (KeyCode::Esc, _) => app.should_quit = true,
+        (KeyCode::Esc, _) => {
+            if app.is_zoomed() {
+                app.toggle_zoom();
+            } else {
+                app.should_quit = true;
+            }
+        }
         (KeyCode::Enter, _) => app.should_switch = true,
         (KeyCode::Left, _) => move_left(app, columns),
         (KeyCode::Right, _) => move_right(app, columns),
         (KeyCode::Up, _) => app.move_up(columns),
         (KeyCode::Down, _) => app.move_down(columns),
-        (KeyCode::Char(ch), KeyModifiers::NONE | KeyModifiers::SHIFT) => push_filter_char(app, ch),
+        (KeyCode::Char(ch), KeyModifiers::NONE | KeyModifiers::SHIFT) if !app.is_zoomed() => {
+            push_filter_char(app, ch);
+        }
         _ => {}
     }
 }
@@ -96,9 +160,18 @@ fn handle_default_key(app: &mut App, key: KeyEvent, columns: usize) {
 /// Vim NORMAL mode: hjkl (and arrows) move the selection, `/` enters search.
 fn handle_vim_normal_key(app: &mut App, key: KeyEvent, columns: usize) {
     match (key.code, key.modifiers) {
-        (KeyCode::Esc, _) | (KeyCode::Char('q'), KeyModifiers::NONE) => app.should_quit = true,
+        (KeyCode::Char('q'), KeyModifiers::NONE) => app.should_quit = true,
+        (KeyCode::Esc, _) => {
+            if app.is_zoomed() {
+                app.toggle_zoom();
+            } else {
+                app.should_quit = true;
+            }
+        }
         (KeyCode::Enter, _) => app.should_switch = true,
-        (KeyCode::Char('/'), KeyModifiers::NONE) => app.start_search(),
+        (KeyCode::Char('/'), KeyModifiers::NONE) if !app.is_zoomed() => {
+            app.start_search();
+        }
         (KeyCode::Left, _) | (KeyCode::Char('h'), KeyModifiers::NONE) => move_left(app, columns),
         (KeyCode::Right, _) | (KeyCode::Char('l'), KeyModifiers::NONE) => move_right(app, columns),
         (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => app.move_up(columns),
@@ -118,18 +191,23 @@ pub fn handle_mouse(
         return;
     }
 
-    let grid = ui::calculate_grid(
-        grid_area,
-        app.visible_session_count(),
-        min_card_width,
-        forced_columns,
-    );
+    let count = if app.is_zoomed() {
+        app.visible_window_count()
+    } else {
+        app.visible_session_count()
+    };
+
+    let grid = ui::calculate_grid(grid_area, count, min_card_width, forced_columns);
     if let Some(index) = grid
         .cards
         .iter()
         .position(|card| contains(*card, mouse.column, mouse.row))
     {
-        app.selected_index = index;
+        if app.is_zoomed() {
+            app.selected_window_index = index;
+        } else {
+            app.selected_index = index;
+        }
         app.should_switch = true;
     }
 }
@@ -153,7 +231,9 @@ fn handle_search_key(app: &mut App, key: KeyEvent, columns: usize) {
     match (key.code, key.modifiers) {
         // In vim mode, Esc always returns to NORMAL rather than quitting.
         (KeyCode::Esc, _) if app.vim_keys => app.clear_search(),
-        (KeyCode::Esc, _) if app.search_text().is_some_and(str::is_empty) => app.should_quit = true,
+        (KeyCode::Esc, _) if app.search_text().is_some_and(str::is_empty) => {
+            app.should_quit = true;
+        }
         (KeyCode::Esc, _) => app.clear_search(),
         (KeyCode::Enter, _) => app.should_switch = true,
         (KeyCode::Backspace, _) => app.pop_search_char(),
@@ -175,14 +255,24 @@ fn push_filter_char(app: &mut App, ch: char) {
 
 fn move_left(app: &mut App, columns: usize) {
     let columns = columns.max(1);
-    if !app.selected_index.is_multiple_of(columns) {
+    let selected_index = if app.is_zoomed() {
+        app.selected_window_index
+    } else {
+        app.selected_index
+    };
+    if !selected_index.is_multiple_of(columns) {
         app.move_left();
     }
 }
 
 fn move_right(app: &mut App, columns: usize) {
     let columns = columns.max(1);
-    if app.selected_index % columns != columns - 1 {
+    let selected_index = if app.is_zoomed() {
+        app.selected_window_index
+    } else {
+        app.selected_index
+    };
+    if selected_index % columns != columns - 1 {
         app.move_right();
     }
 }
@@ -195,7 +285,7 @@ mod tests {
     use ratatui::layout::Rect;
 
     use super::*;
-    use crate::model::{App, Session};
+    use crate::model::{App, Session, Window};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -209,6 +299,17 @@ mod tests {
             window_count: 1,
             current_window: None,
             last_activity: None,
+            preview: Vec::new(),
+            preview_error: None,
+        }
+    }
+
+    fn window(id: &str, name: &str, active: bool) -> Window {
+        Window {
+            id: id.to_string(),
+            index: 0,
+            name: name.to_string(),
+            active,
             preview: Vec::new(),
             preview_error: None,
         }
@@ -329,12 +430,35 @@ mod tests {
     }
 
     #[test]
-    fn vim_esc_quits_in_normal_mode() {
+    fn vim_q_quits_even_when_zoomed() {
+        let mut app = vim_app(&["dev"]);
+        app.toggle_zoom();
+        assert!(app.is_zoomed());
+
+        handle_key(&mut app, key(KeyCode::Char('q')), 1);
+
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn vim_esc_quits_in_normal_mode_when_not_zoomed() {
         let mut app = vim_app(&["one"]);
 
         handle_key(&mut app, key(KeyCode::Esc), 1);
 
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn vim_esc_zooms_out_when_zoomed_without_quitting() {
+        let mut app = vim_app(&["one"]);
+        app.toggle_zoom();
+        assert!(app.is_zoomed());
+
+        handle_key(&mut app, key(KeyCode::Esc), 1);
+
+        assert!(!app.is_zoomed());
+        assert!(!app.should_quit);
     }
 
     #[test]
@@ -364,7 +488,7 @@ mod tests {
     fn q_filters_instead_of_quitting() {
         let mut app = App::new(vec![session("queue")], None);
 
-        handle_key(&mut app, key(KeyCode::Char('q')), 1);
+        handle_key_with_toggle(&mut app, key(KeyCode::Char('q')), 1, None, None);
 
         assert_eq!(app.search_text(), Some("q"));
         assert!(!app.should_quit);
@@ -416,6 +540,7 @@ mod tests {
             KeyEvent::new(KeyCode::Char('e'), KeyModifiers::ALT),
             1,
             toggle_key,
+            None,
         );
 
         assert!(app.should_quit);
@@ -435,6 +560,7 @@ mod tests {
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
             1,
             toggle_key,
+            None,
         );
 
         assert!(!app.should_quit);
@@ -453,6 +579,7 @@ mod tests {
             KeyEvent::new(KeyCode::Char('E'), KeyModifiers::SHIFT),
             1,
             toggle_key,
+            None,
         );
 
         assert!(!app.should_quit);
@@ -469,6 +596,7 @@ mod tests {
             KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
             1,
             toggle_key,
+            None,
         );
 
         assert!(app.should_quit);
@@ -487,6 +615,7 @@ mod tests {
             KeyEvent::new(KeyCode::Char('e'), KeyModifiers::ALT),
             1,
             toggle_key,
+            None,
         );
 
         assert!(app.should_quit);
@@ -601,5 +730,154 @@ mod tests {
         app.selected_index = 3;
         handle_key(&mut app, key(KeyCode::Left), 3);
         assert_eq!(app.selected_index, 3);
+    }
+
+    #[test]
+    fn zoom_key_toggles_zoom_state() {
+        let mut app = App::new(vec![session("dev")], None);
+        assert!(!app.is_zoomed());
+
+        handle_key(&mut app, key(KeyCode::Char('z')), 1);
+        assert!(app.is_zoomed());
+
+        handle_key(&mut app, key(KeyCode::Char('z')), 1);
+        assert!(!app.is_zoomed());
+    }
+
+    #[test]
+    fn esc_zooms_out_when_zoomed_without_quitting() {
+        let mut app = App::new(vec![session("dev")], None);
+        app.toggle_zoom();
+        assert!(app.is_zoomed());
+
+        handle_key(&mut app, key(KeyCode::Esc), 1);
+        assert!(!app.is_zoomed());
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn zoomed_grid_navigation_clamps_at_row_edges() {
+        let mut app = App::new(vec![session("dev")], None);
+        app.toggle_zoom();
+        app.set_windows_for_zoomed_session(vec![
+            window("@1", "one", false),
+            window("@2", "two", false),
+            window("@3", "three", false),
+            window("@4", "four", false),
+        ]);
+        app.selected_window_index = 2;
+
+        handle_key(&mut app, key(KeyCode::Right), 3);
+        assert_eq!(app.selected_window_index, 2);
+
+        app.selected_window_index = 3;
+        handle_key(&mut app, key(KeyCode::Left), 3);
+        assert_eq!(app.selected_window_index, 3);
+    }
+
+    #[test]
+    fn type_filter_and_press_default_zoom_key_zooms_into_session() {
+        let mut app = App::new(vec![session("backend"), session("frontend")], None);
+
+        // In default mode, typing 'f' starts search and narrows selection to "frontend"
+        handle_key(&mut app, key(KeyCode::Char('f')), 2);
+        assert!(app.is_searching());
+        assert_eq!(app.selected_session().unwrap().name, "frontend");
+
+        // Pressing default zoom key 'z' must zoom into the selected session rather than appending 'z'
+        handle_key(&mut app, key(KeyCode::Char('z')), 2);
+        assert!(app.is_zoomed());
+        assert!(!app.is_searching());
+        assert_eq!(app.zoomed_session().unwrap().name, "frontend");
+    }
+
+    #[test]
+    fn modified_zoom_key_from_search_zooms_and_single_esc_exits() {
+        let mut app = App::new(vec![session("dev")], None);
+        let zoom_key = ToggleKey::from_tmux_key("M-z");
+
+        // Type a search query
+        handle_key_with_toggle(&mut app, key(KeyCode::Char('d')), 1, None, zoom_key);
+        assert!(app.is_searching());
+
+        // Trigger zoom with modified key
+        handle_key_with_toggle(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('z'), KeyModifiers::ALT),
+            1,
+            None,
+            zoom_key,
+        );
+        assert!(app.is_zoomed());
+        assert!(!app.is_searching());
+
+        // Single Esc zooms out
+        handle_key_with_toggle(&mut app, key(KeyCode::Esc), 1, None, zoom_key);
+        assert!(!app.is_zoomed());
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn resolve_zoom_key_validates_and_handles_conflicts() {
+        let default_z = ToggleKey::from_tmux_key("z");
+
+        // Valid custom key
+        let (key_x, label_x) = resolve_zoom_key(Some("x"), None, false);
+        assert_eq!(key_x, ToggleKey::from_tmux_key("x"));
+        assert_eq!(label_x, "x");
+
+        // Valid modified custom key
+        let (key_mz, label_mz) = resolve_zoom_key(Some("M-z"), None, false);
+        assert_eq!(key_mz, ToggleKey::from_tmux_key("M-z"));
+        assert_eq!(label_mz, "M-z");
+
+        // Unsupported key string falls back to 'z'
+        let (key_f1, label_f1) = resolve_zoom_key(Some("F1"), None, false);
+        assert_eq!(key_f1, default_z);
+        assert_eq!(label_f1, "z");
+
+        // Esc is reserved and falls back to 'z'
+        let (key_esc, label_esc) = resolve_zoom_key(Some("Esc"), None, false);
+        assert_eq!(key_esc, default_z);
+        assert_eq!(label_esc, "z");
+
+        // C-c is reserved and falls back to 'z'
+        let (key_cc, label_cc) = resolve_zoom_key(Some("C-c"), None, false);
+        assert_eq!(key_cc, default_z);
+        assert_eq!(label_cc, "z");
+
+        // Conflict with toggle_key falls back to 'z'
+        let toggle = ToggleKey::from_tmux_key("s");
+        let (key_s, label_s) = resolve_zoom_key(Some("s"), toggle, false);
+        assert_eq!(key_s, default_z);
+        assert_eq!(label_s, "z");
+
+        // Conflict with toggle key 'z' causes fallback 'z' to be rejected
+        let toggle_z = ToggleKey::from_tmux_key("z");
+        let (key_tz, label_tz) = resolve_zoom_key(None, toggle_z, false);
+        assert_eq!(key_tz, None);
+        assert_eq!(label_tz, "");
+
+        // Conflict with vim normal mode keys in vim mode falls back to 'z'
+        for k in &["h", "j", "k", "l", "/", "q"] {
+            let (key_vim, label_vim) = resolve_zoom_key(Some(k), None, true);
+            assert_eq!(key_vim, default_z, "key {k} should fall back to z");
+            assert_eq!(label_vim, "z");
+        }
+
+        // Modified keys in vim mode (e.g. M-h) are allowed
+        let (key_mh, label_mh) = resolve_zoom_key(Some("M-h"), None, true);
+        assert_eq!(key_mh, ToggleKey::from_tmux_key("M-h"));
+        assert_eq!(label_mh, "M-h");
+
+        // 'q' without vim mode is valid
+        let (key_q_normal, label_q_normal) = resolve_zoom_key(Some("q"), None, false);
+        assert_eq!(key_q_normal, ToggleKey::from_tmux_key("q"));
+        assert_eq!(label_q_normal, "q");
+
+        // None falls back to 'z'
+        let (key_none, label_none) = resolve_zoom_key(None, None, false);
+        assert_eq!(key_none, default_z);
+        assert_eq!(label_none, "z");
     }
 }

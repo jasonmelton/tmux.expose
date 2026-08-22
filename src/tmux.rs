@@ -2,19 +2,23 @@ use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
 
-use crate::model::Session;
+use crate::model::{Session, Window};
 
-const FIELD_SEPARATOR: char = ':';
-const LEGACY_FIELD_SEPARATOR: char = '\u{1f}';
-const SESSION_FORMAT: &str = "#{session_id}:#{session_name}:#{session_attached}:#{session_windows}:#{session_created}:#{session_activity}";
+const FIELD_SEPARATOR: char = '\u{1f}';
+const LEGACY_FIELD_SEPARATOR: char = ':';
+const SESSION_FORMAT: &str = "#{session_id}\u{1f}#{session_name}\u{1f}#{session_attached}\u{1f}#{session_windows}\u{1f}#{session_created}\u{1f}#{session_activity}";
+const WINDOW_FORMAT: &str =
+    "#{window_id}\u{1f}#{window_name}\u{1f}#{window_active}\u{1f}#{window_index}";
 
-pub fn list_sessions() -> Result<Vec<Session>> {
-    list_sessions_skipping_preview_for(None)
+fn detect_separator(line: &str) -> char {
+    if line.contains(FIELD_SEPARATOR) {
+        FIELD_SEPARATOR
+    } else {
+        LEGACY_FIELD_SEPARATOR
+    }
 }
 
-pub fn list_sessions_skipping_preview_for(
-    current_session_id: Option<&str>,
-) -> Result<Vec<Session>> {
+fn fetch_sessions_raw() -> Result<Vec<Session>> {
     let output = Command::new("tmux")
         .args(["list-sessions", "-F", SESSION_FORMAT])
         .output()
@@ -25,7 +29,21 @@ pub fn list_sessions_skipping_preview_for(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut sessions = parse_sessions_output(&stdout)?;
+    parse_sessions_output(&stdout)
+}
+
+pub fn list_sessions() -> Result<Vec<Session>> {
+    list_sessions_skipping_preview_for(None)
+}
+
+pub fn list_sessions_metadata() -> Result<Vec<Session>> {
+    fetch_sessions_raw()
+}
+
+pub fn list_sessions_skipping_preview_for(
+    current_session_id: Option<&str>,
+) -> Result<Vec<Session>> {
+    let mut sessions = fetch_sessions_raw()?;
 
     for session in &mut sessions {
         session.current_window = current_window_name(&session.id).unwrap_or(None);
@@ -48,6 +66,42 @@ pub fn list_sessions_skipping_preview_for(
     }
 
     Ok(sessions)
+}
+
+pub fn list_windows(session_id: &str, current_session_id: Option<&str>) -> Result<Vec<Window>> {
+    let output = Command::new("tmux")
+        .args(["list-windows", "-t", session_id, "-F", WINDOW_FORMAT])
+        .output()
+        .with_context(|| format!("failed to run tmux list-windows for session '{session_id}'"))?;
+
+    if !output.status.success() {
+        return Err(tmux_error("tmux list-windows failed", &output.stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut windows = parse_windows(&stdout);
+
+    let capture_preview = should_capture_preview(session_id, current_session_id);
+    for window in &mut windows {
+        if !capture_preview {
+            window.preview.clear();
+            window.preview_error = Some("Current session preview disabled".to_string());
+            continue;
+        }
+
+        match capture_window_preview(&window.id, 200) {
+            Ok(preview) => {
+                window.preview = preview;
+                window.preview_error = None;
+            }
+            Err(error) => {
+                window.preview.clear();
+                window.preview_error = Some(error.to_string());
+            }
+        }
+    }
+
+    Ok(windows)
 }
 
 pub fn current_session_name() -> Result<Option<String>> {
@@ -93,12 +147,11 @@ pub fn current_window_name(session_target: &str) -> Result<Option<String>> {
     Ok((!name.is_empty()).then_some(name))
 }
 
-pub fn capture_session_preview(session_target: &str, max_lines: usize) -> Result<Vec<String>> {
-    let target = format!("{}:", session_target);
+fn capture_pane_preview(target: &str, context_desc: &str, max_lines: usize) -> Result<Vec<String>> {
     let output = Command::new("tmux")
-        .args(["capture-pane", "-e", "-p", "-t", &target])
+        .args(["capture-pane", "-e", "-p", "-t", target])
         .output()
-        .with_context(|| format!("failed to capture pane for session '{session_target}'"))?;
+        .with_context(|| format!("failed to capture pane for {context_desc}"))?;
 
     if !output.status.success() {
         return Err(tmux_error("tmux capture-pane failed", &output.stderr));
@@ -108,6 +161,19 @@ pub fn capture_session_preview(session_target: &str, max_lines: usize) -> Result
         String::from_utf8_lossy(&output.stdout).as_ref(),
         max_lines,
     ))
+}
+
+pub fn capture_session_preview(session_target: &str, max_lines: usize) -> Result<Vec<String>> {
+    let target = format!("{}:", session_target);
+    capture_pane_preview(&target, &format!("session '{session_target}'"), max_lines)
+}
+
+pub fn capture_window_preview(window_target: &str, max_lines: usize) -> Result<Vec<String>> {
+    capture_pane_preview(
+        window_target,
+        &format!("window '{window_target}'"),
+        max_lines,
+    )
 }
 
 pub fn switch_client(session_target: &str) -> Result<()> {
@@ -127,11 +193,12 @@ pub fn parse_sessions(output: &str) -> Vec<Session> {
     output
         .lines()
         .filter_map(|line| {
-            let separator = if line.contains(FIELD_SEPARATOR) {
-                FIELD_SEPARATOR
-            } else {
-                LEGACY_FIELD_SEPARATOR
-            };
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            let separator = detect_separator(line);
+
             let mut parts = line.splitn(6, separator);
             let id = parts.next()?.to_string();
             let name = parts.next()?.to_string();
@@ -139,7 +206,9 @@ pub fn parse_sessions(output: &str) -> Vec<Session> {
                 return None;
             }
 
-            let attached = parts.next().is_some_and(|value| value != "0");
+            let attached = parts
+                .next()
+                .is_some_and(|value| value != "0" && value != "false");
             let window_count = parts
                 .next()
                 .and_then(|value| value.parse::<u32>().ok())
@@ -157,6 +226,43 @@ pub fn parse_sessions(output: &str) -> Vec<Session> {
                 window_count,
                 current_window: None,
                 last_activity,
+                preview: Vec::new(),
+                preview_error: None,
+            })
+        })
+        .collect()
+}
+
+pub fn parse_windows(output: &str) -> Vec<Window> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+
+            let separator = detect_separator(line);
+            let mut parts = line.splitn(5, separator);
+            let id = parts.next()?.to_string();
+            let name = parts.next()?.to_string();
+            if name.is_empty() {
+                return None;
+            }
+
+            let active = parts
+                .next()
+                .is_some_and(|value| value != "0" && value != "false" && !value.is_empty());
+            let index = parts
+                .next()
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(0);
+
+            Some(Window {
+                id,
+                index,
+                name,
+                active,
                 preview: Vec::new(),
                 preview_error: None,
             })
@@ -220,6 +326,61 @@ mod tests {
         assert_eq!(sessions[0].last_activity.as_deref(), Some("1710000300"));
         assert_eq!(sessions[1].name, "logs");
         assert!(!sessions[1].attached);
+    }
+
+    #[test]
+    fn parses_window_lines_from_tmux_format() {
+        let windows = parse_windows("@1\u{1f}bash\u{1f}1\u{1f}0\n@2\u{1f}editor\u{1f}0\u{1f}1\n");
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].id, "@1");
+        assert_eq!(windows[0].index, 0);
+        assert_eq!(windows[0].name, "bash");
+        assert!(windows[0].active);
+        assert_eq!(windows[1].id, "@2");
+        assert_eq!(windows[1].index, 1);
+        assert_eq!(windows[1].name, "editor");
+        assert!(!windows[1].active);
+    }
+
+    #[test]
+    fn parses_window_lines_with_colon_in_name() {
+        let windows_unit = parse_windows("@1\u{1f}api:server\u{1f}1\u{1f}0\n");
+        assert_eq!(windows_unit.len(), 1);
+        assert_eq!(windows_unit[0].id, "@1");
+        assert_eq!(windows_unit[0].index, 0);
+        assert_eq!(windows_unit[0].name, "api:server");
+        assert!(windows_unit[0].active);
+    }
+
+    #[test]
+    fn parses_window_lines_colon_delimited() {
+        let windows = parse_windows("@1:bash:1:0\n@2:editor:0:1\n");
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].id, "@1");
+        assert_eq!(windows[0].index, 0);
+        assert_eq!(windows[0].name, "bash");
+        assert!(windows[0].active);
+        assert_eq!(windows[1].id, "@2");
+        assert_eq!(windows[1].index, 1);
+        assert_eq!(windows[1].name, "editor");
+        assert!(!windows[1].active);
+    }
+
+    #[test]
+    fn parses_window_lines_without_index() {
+        let windows = parse_windows("@1:bash:1\n@2:editor:0\n");
+
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0].id, "@1");
+        assert_eq!(windows[0].index, 0);
+        assert_eq!(windows[0].name, "bash");
+        assert!(windows[0].active);
+        assert_eq!(windows[1].id, "@2");
+        assert_eq!(windows[1].index, 0);
+        assert_eq!(windows[1].name, "editor");
+        assert!(!windows[1].active);
     }
 
     #[test]
