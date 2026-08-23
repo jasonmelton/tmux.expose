@@ -242,9 +242,9 @@ fn render_card_inner(
                             let mut pane_lines = Vec::new();
                             
                             let pane_title = if pane.active {
-                                Span::styled(format!(" pane {} ", pane_idx), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                                Span::styled(format!(" {} ", pane.title), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
                             } else {
-                                Span::styled(format!(" pane {} ", pane_idx), Style::default().fg(Color::DarkGray))
+                                Span::styled(format!(" {} ", pane.title), Style::default().fg(Color::DarkGray))
                             };
                             
                             let pane_block = Block::default()
