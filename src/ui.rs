@@ -142,9 +142,10 @@ enum PreviewData<'a> {
 
 struct CardData<'a> {
     title: &'a str,
+    top_right_title: Option<Span<'static>>,
     highlight: bool,
     bottom_title: Span<'static>,
-    header: Line<'static>,
+    header: Option<Line<'static>>,
     preview: PreviewData<'a>,
     preview_error: Option<&'a str>,
 }
@@ -160,7 +161,7 @@ fn render_card_inner(
         " {} ",
         truncate(card.title, area.width.saturating_sub(12) as usize)
     );
-    let block = Block::default()
+    let mut block = Block::default()
         .title(Span::styled(
             title,
             card_title_style(selected, card.highlight, colors),
@@ -174,10 +175,16 @@ fn render_card_inner(
         })
         .border_style(card_border_style(selected, card.highlight, colors));
 
+    if let Some(right_title) = card.top_right_title {
+        block = block.title(ratatui::widgets::block::Title::from(right_title).alignment(ratatui::layout::Alignment::Right));
+    }
+
     let preview_height = area.height.saturating_sub(5) as usize;
     let mut lines = Vec::new();
-    lines.push(card.header);
-    lines.push(Line::from(""));
+    if let Some(header) = card.header {
+        lines.push(header);
+        lines.push(Line::from(""));
+    }
 
     if card.preview_error.is_some() {
         lines.push(Line::from(Span::styled(
@@ -206,11 +213,12 @@ fn render_card_inner(
                     let paragraph = Paragraph::new(lines.clone()).block(block.clone());
                     frame.render_widget(paragraph, area);
                     
+                    let offset = lines.len() as u16;
                     let grid_area = Rect {
                         x: inner_area.x,
-                        y: inner_area.y.saturating_add(2),
+                        y: inner_area.y.saturating_add(offset),
                         width: inner_area.width,
-                        height: inner_area.height.saturating_sub(2),
+                        height: inner_area.height.saturating_sub(offset),
                     };
                     
                     let pane_count = panes.len();
@@ -294,18 +302,20 @@ pub fn render_card(
     colors: CardColors,
     area: Rect,
 ) {
-    let window = session.current_window.as_deref().unwrap_or("unknown");
-    let header = Line::from(vec![Span::styled(
-        format!("{} · {} windows", window, session.window_count),
+    let window_icons = vec!["\u{EB7F}"; session.window_count as usize].join(" ");
+    let top_right_title = Some(Span::styled(
+        format!(" {} ", window_icons),
         Style::default().fg(Color::Cyan),
-    )]);
+    ));
+
     render_card_inner(
         frame,
         CardData {
             title: &session.name,
+            top_right_title,
             highlight: current_attached,
             bottom_title: session_status_span(session.attached),
-            header,
+            header: None,
             preview: PreviewData::Single(&session.preview),
             preview_error: session.preview_error.as_deref(),
         },
@@ -322,17 +332,20 @@ pub fn render_window_card(
     colors: CardColors,
     area: Rect,
 ) {
-    let header = Line::from(vec![Span::styled(
-        format!("window {}", window.index),
+    let pane_icons = vec!["\u{EB7F}"; window.panes.len()].join(" ");
+    let top_right_title = Some(Span::styled(
+        format!(" {} ", pane_icons),
         Style::default().fg(Color::Cyan),
-    )]);
+    ));
+
     render_card_inner(
         frame,
         CardData {
             title: &window.name,
+            top_right_title,
             highlight: window.active,
             bottom_title: window_status_span(window.active),
-            header,
+            header: None,
             preview: PreviewData::Grid(&window.panes),
             preview_error: window.preview_error.as_deref(),
         },
