@@ -301,7 +301,7 @@ pub fn render_card(
     colors: CardColors,
     area: Rect,
 ) {
-    let window_icons = "\u{EB7F}".repeat(session.window_count as usize);
+    let window_icons = vec!["\u{EB7F}"; session.window_count as usize].join(" ");
     let top_right_title = Some(Span::styled(
         format!(" {} ", window_icons),
         Style::default().fg(Color::Cyan),
