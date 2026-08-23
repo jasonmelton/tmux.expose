@@ -13,6 +13,7 @@ pub struct Session {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PanePreview {
     pub id: String,
+    pub title: String,
     pub active: bool,
     pub lines: Vec<String>,
 }

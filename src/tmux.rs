@@ -174,7 +174,7 @@ pub fn capture_session_preview(session_target: &str, max_lines: usize) -> Result
 
 pub fn capture_window_panes(window_target: &str, max_lines: usize) -> Result<Vec<crate::model::PanePreview>> {
     let output = Command::new("tmux")
-        .args(["list-panes", "-t", window_target, "-F", "#{pane_id}\u{1f}#{pane_active}"])
+        .args(["list-panes", "-t", window_target, "-F", "#{pane_id}\u{1f}#{pane_active}\u{1f}#{pane_index}\u{1f}#{pane_current_command}"])
         .output()
         .with_context(|| format!("failed to list panes for window '{window_target}'"))?;
 
@@ -186,11 +186,13 @@ pub fn capture_window_panes(window_target: &str, max_lines: usize) -> Result<Vec
     for line in String::from_utf8_lossy(&output.stdout).lines() {
         if line.is_empty() { continue; }
         let mut parts = line.split('\u{1f}');
-        if let (Some(id), Some(active_str)) = (parts.next(), parts.next()) {
+        if let (Some(id), Some(active_str), Some(index_str), Some(cmd_str)) = (parts.next(), parts.next(), parts.next(), parts.next()) {
             let active = active_str == "1" || active_str == "true";
             let lines = capture_pane_preview(id, &format!("pane '{id}'"), max_lines).unwrap_or_default();
+            let title = format!("{} ({})", index_str, cmd_str);
             panes.push(crate::model::PanePreview {
                 id: id.to_string(),
+                title,
                 active,
                 lines,
             });
