@@ -213,11 +213,12 @@ fn render_card_inner(
                     let paragraph = Paragraph::new(lines.clone()).block(block.clone());
                     frame.render_widget(paragraph, area);
                     
+                    let offset = lines.len() as u16;
                     let grid_area = Rect {
                         x: inner_area.x,
-                        y: inner_area.y.saturating_add(2),
+                        y: inner_area.y.saturating_add(offset),
                         width: inner_area.width,
-                        height: inner_area.height.saturating_sub(2),
+                        height: inner_area.height.saturating_sub(offset),
                     };
                     
                     let pane_count = panes.len();
