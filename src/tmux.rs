@@ -6,7 +6,7 @@ use crate::model::{Session, Window};
 
 const FIELD_SEPARATOR: char = '\u{1f}';
 const LEGACY_FIELD_SEPARATOR: char = ':';
-const SESSION_FORMAT: &str = "#{session_id}\u{1f}#{session_name}\u{1f}#{session_attached}\u{1f}#{session_windows}\u{1f}#{session_created}\u{1f}#{session_activity}";
+const SESSION_FORMAT: &str = "#{session_id}\u{1f}#{session_name}\u{1f}#{session_attached}\u{1f}#{session_windows}\u{1f}#{session_created}\u{1f}#{window_activity}";
 const WINDOW_FORMAT: &str =
     "#{window_id}\u{1f}#{window_name}\u{1f}#{window_active}\u{1f}#{window_index}\u{1f}#{window_activity}";
 
