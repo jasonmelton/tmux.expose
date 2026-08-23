@@ -189,7 +189,7 @@ pub fn capture_window_panes(window_target: &str, max_lines: usize) -> Result<Vec
         if let (Some(id), Some(active_str), Some(index_str), Some(cmd_str)) = (parts.next(), parts.next(), parts.next(), parts.next()) {
             let active = active_str == "1" || active_str == "true";
             let lines = capture_pane_preview(id, &format!("pane '{id}'"), max_lines).unwrap_or_default();
-            let title = format!("{} ({})", index_str, cmd_str);
+            let title = cmd_str.to_string();
             panes.push(crate::model::PanePreview {
                 id: id.to_string(),
                 title,
