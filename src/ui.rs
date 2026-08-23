@@ -331,18 +331,20 @@ pub fn render_window_card(
     colors: CardColors,
     area: Rect,
 ) {
-    let header = Line::from(vec![Span::styled(
-        format!("window {}", window.index),
+    let pane_icons = vec!["\u{EB7F}"; window.panes.len()].join(" ");
+    let top_right_title = Some(Span::styled(
+        format!(" {} ", pane_icons),
         Style::default().fg(Color::Cyan),
-    )]);
+    ));
+
     render_card_inner(
         frame,
         CardData {
             title: &window.name,
-            top_right_title: None,
+            top_right_title,
             highlight: window.active,
             bottom_title: window_status_span(window.active),
-            header: Some(header),
+            header: None,
             preview: PreviewData::Grid(&window.panes),
             preview_error: window.preview_error.as_deref(),
         },
